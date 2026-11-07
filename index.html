@@ -80,6 +80,7 @@ main{padding:16px 0 120px}
 .btn.primary{background:var(--brown);border-color:var(--brown);color:var(--surface)}
 .btn.danger{color:var(--exp);border-color:var(--exp-soft)}
 .btn.block{width:100%}
+a.btn{text-decoration:none}
 
 /* list rows */
 .day{font-size:14px;color:var(--muted);margin:14px 4px 6px;font-weight:600}
@@ -720,7 +721,7 @@ function loginCard(){
     '<p style="margin:0"><strong>'+esc(a.email||'')+'</strong> ยังไม่อยู่ในรายชื่อผู้ใช้ ให้เจ้าของร้านเพิ่มอีเมลนี้ที่หน้า "สำรอง" → "ผู้ใช้งาน" แล้วกดลองอีกครั้ง</p>' +
     '<button class="btn primary block" data-act="recheck">ลองอีกครั้ง</button><button class="btn block" data-act="logout">ออกจากระบบ / ใช้อีเมลอื่น</button>'+skip+'</section>';
   if (a.step==='sent') return '<section class="card stack"><h2>เช็กอีเมลของคุณ</h2>' +
-    '<p style="margin:0">ส่งลิงก์เข้าสู่ระบบไปที่ <strong>'+esc(a.email)+'</strong> แล้ว เปิดอีเมลบน<strong>เครื่องนี้</strong>แล้วกดลิงก์ ระบบจะพากลับมาที่แอปและเข้าสู่ระบบให้เอง</p>' +
+    '<p style="margin:0">ส่งลิงก์เข้าสู่ระบบไปที่ <strong>'+esc(a.email)+'</strong> แล้ว '+(IS_FILE ? 'กดลิงก์ในอีเมลแล้วจะเปิด<strong>หน้าเว็บของแอป</strong>และเข้าสู่ระบบที่นั่น (ไม่ใช่ไฟล์นี้)' : 'เปิดอีเมลบน<strong>เครื่องนี้</strong>แล้วกดลิงก์ ระบบจะพากลับมาที่แอปและเข้าสู่ระบบให้เอง')+'</p>' +
     '<label for="loginCode" class="small muted">ถ้าในอีเมลมีรหัสตัวเลข ใส่ตรงนี้แทนได้</label><input id="loginCode" class="search" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="รหัสจากอีเมล">' +
     '<button class="btn primary block" data-act="verifyCode">ยืนยันรหัส</button><p id="loginMsg" class="small" role="alert" style="margin:0;color:var(--exp)"></p>' +
     '<button class="btn block" data-act="loginAgain">ส่งใหม่ / เปลี่ยนอีเมล</button>'+skip+'</section>';
@@ -729,10 +730,17 @@ function loginCard(){
     '<button class="btn primary block" data-act="sendLink">ส่งลิงก์เข้าสู่ระบบ</button><p id="loginMsg" class="small" role="alert" style="margin:0;color:var(--exp)"></p>'+skip+'</section>';
 }
 function needLogin(){ return mode==='web' && !conn && !!ui.auth && !ui.skipLogin; }
+const IS_FILE = location.protocol === 'file:';
+function fileBanner(){
+  if (!IS_FILE || mode==='claude') return '';
+  return '<div class="banner" role="note"><div><strong>คุณเปิดแอปจากไฟล์ในเครื่อง</strong> แบบนี้เชื่อมฐานข้อมูลไม่ได้ เพราะลิงก์เข้าสู่ระบบในอีเมลจะพาไปที่หน้าเว็บ ไม่ใช่ไฟล์นี้ และรายการที่บันทึกในไฟล์นี้จะเก็บแยกอยู่ในเครื่องเท่านั้น</div>' +
+    '<div class="btns"><a class="btn primary" href="'+WEB_URL+'">เปิดหน้าเว็บที่ใช้ได้จริง</a></div>' +
+    '<div class="small muted">แนะนำให้บุ๊กมาร์กหน้าเว็บนี้ไว้แทนไฟล์ ถ้าอีเมลมีรหัสตัวเลข ก็ใส่รหัสในไฟล์นี้เพื่อเข้าสู่ระบบได้</div></div>';
+}
 function render(){
   const ro = ui.save==='readonly';
-  if (needLogin()){ app.innerHTML = header() + '<main><div class="col stack">'+loginCard()+'</div></main>'; updateSave(); return; }
-  app.innerHTML =header() + '<main><div class="col stack">' + (state.sample ? sampleBanner() : '') +
+  if (needLogin()){ app.innerHTML = header() + '<main><div class="col stack">'+fileBanner()+loginCard()+'</div></main>'; updateSave(); return; }
+  app.innerHTML = header() + '<main><div class="col stack">' + fileBanner() + (state.sample ? sampleBanner() : '') +
     ({overview, entries, tax:taxPanel, backup}[ui.tab])(ro) + '<p class="note">ตัวเลขภาษีเป็นการประมาณการ ไม่ใช่คำแนะนำทางภาษีอย่างเป็นทางการ ก่อนยื่นแบบควรตรวจสอบกับกรมสรรพากร (โทร 1161) หรือนักบัญชี</p></div></main>' +
     (ro || ui.tab==='overview' ? '' : '<button class="fab" data-open="out" aria-label="เพิ่มรายการ">'+ICON.plus+'บันทึก</button>') + bottomNav();
   updateSave();
@@ -1191,7 +1199,7 @@ async function sendLink(){
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ say('ใส่อีเมลให้ถูกต้องก่อนนะ'); return; }
   if (!sbClient){ say('ยังเชื่อมต่อไม่ได้ ลองใหม่อีกครั้ง'); return; }
   say('กำลังส่ง…', true);
-  let r; try { r = await sbClient.auth.signInWithOtp({email, options:{emailRedirectTo: location.origin + location.pathname, shouldCreateUser:true}}); } catch(e){ r = {error:e}; }
+  let r; try { r = await sbClient.auth.signInWithOtp({email, options:{emailRedirectTo: IS_FILE ? WEB_URL : location.origin + location.pathname, shouldCreateUser:true}}); } catch(e){ r = {error:e}; }
   if (r.error){ say(/rate|second|too many|limit/i.test(String(r.error.message)) ? 'ส่งอีเมลบ่อยเกินไป รอสักครู่แล้วลองใหม่' : 'ส่งไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   ui.auth = {step:'sent', email}; render();
 }
