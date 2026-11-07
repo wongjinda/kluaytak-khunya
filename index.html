@@ -201,21 +201,6 @@ nav.bottom a[aria-current="page"] .nicon{background:var(--sun-soft)}
 .savebar button{border:0;background:#fff6d6;color:#3b2a14;border-radius:999px;padding:4px 12px;min-height:32px;font-weight:600;cursor:pointer;margin-left:4px}
 .dbstat{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;font-size:15.5px}
 .dbstat>:nth-child(2n){text-align:right;overflow-wrap:anywhere}
-.items{display:grid;gap:10px;grid-template-columns:minmax(0,1fr)}
-.item{background:var(--surface);border-radius:16px;padding:10px 12px;display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
-.item .r1{display:flex;gap:8px;align-items:center}
-.item input{border:1.5px solid var(--line);background:var(--bg);border-radius:10px;padding:8px 10px;min-height:44px;width:100%;min-width:0}
-.item .nums{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr) minmax(0,1.1fr);gap:8px}
-.item .nums label{font-size:12.5px;color:var(--muted);display:grid;gap:2px}
-.item .lt{display:flex;justify-content:space-between;font-size:14.5px;color:var(--muted)}
-.item .lt strong{color:var(--ink);font-family:var(--display);font-weight:500}
-.ix{border:0;background:var(--bg);width:44px;height:44px;border-radius:12px;flex:none;cursor:pointer;font-size:22px;line-height:1;color:var(--muted)}
-.additem{border:1.5px dashed var(--brown);background:none;color:var(--brown);border-radius:14px;min-height:48px;font-weight:600;cursor:pointer}
-.amtline input[readonly]{color:var(--ink)}
-.autonote{font-size:13.5px;color:var(--muted)}
-.itbl td,.itbl th{padding:8px 4px;vertical-align:top}
-.itbl td small{display:block;color:var(--muted);font-size:12.5px}
-.itbl .nm{font-weight:500}
 .evgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .evgrid:empty{display:none}
 .evth{position:relative;background:var(--surface);border-radius:12px;overflow:hidden;display:grid}
@@ -232,6 +217,7 @@ nav.bottom a[aria-current="page"] .nicon{background:var(--sun-soft)}
 .viewer img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 .viewer .vload{color:#fff}
 .clip{font-size:12.5px;margin-left:6px;color:var(--muted);font-weight:500}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -239,91 +225,229 @@ nav.bottom a[aria-current="page"] .nicon{background:var(--sun-soft)}
 <div id="sheetRoot"></div>
 <script id="app-script">
 (function(){
-"use strict";
-const LS_KEY = 'kluaytak-khunya-state';
+'use strict';
 
+/* =====================================================================
+   กล้วยตากคุณย่า · บัญชีรายรับ–รายจ่าย
+   One file that runs in two places:
+   - inside Claude (artifact): talks to Supabase through the viewer's Supabase connector
+   - as a normal web page: talks to Supabase with supabase-js after e-mail sign-in
+   Either way every read/write goes through the public.app_* database functions,
+   which check who is calling. localStorage keeps a cache and an offline queue.
+   ===================================================================== */
+
+/* ---------- 1. config & constants ---------- */
+const CFG = {
+  project: 'iyyjazdmdtdbrbwlteng',
+  connector: 'Supabase', connectorTool: 'execute_sql',
+  url: 'https://iyyjazdmdtdbrbwlteng.supabase.co',
+  key: 'sb_publishable_Rh9QpLRtF5TvXje6G1mDCA_8_9sP0IB',
+  lib: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js',
+  webUrl: 'https://wongjinda.github.io/kluaytak-khunya/',
+  wipePinSha256: 'b3943428559bf9392be8588f0ce4e5a53d5d0b189a21b16bf2726ca0411d63e6',
+  lsState: 'kluaytak-khunya-state',
+  lsEvidence: 'kluaytak-khunya-evidence-pending'
+};
 const CATS = {
   in: [['retail','ขายหน้าร้าน','🏪'],['wholesale','ขายส่งร้านค้า','📦'],['online','ขายออนไลน์','📱'],['consign','ฝากขาย / ออกบูธ','🎪'],['other_in','รายรับอื่น','💰']],
   out: [['banana','กล้วยน้ำว้าสด','🍌'],['ingredient','น้ำผึ้ง / ส่วนผสม','🍯'],['package','ถุง / ฉลาก','🛍️'],['labor','ค่าแรง','👩‍🌾'],['utility','ไฟ / น้ำ / แก๊ส','🔥'],['shipping','ขนส่ง / น้ำมัน','🚚'],['equipment','อุปกรณ์ / ซ่อม','🔧'],['marketing','โฆษณา / ค่าแพลตฟอร์ม','📣'],['license','ค่าธรรมเนียม / ใบอนุญาต','📄'],['other_out','รายจ่ายอื่น','🧾']]
 };
-const CAT = {}; [...CATS.in, ...CATS.out].forEach(([k,n,e])=>CAT[k]={n,e});
+const CAT = {}; [...CATS.in, ...CATS.out].forEach(([k,n,e])=>{ CAT[k] = {n, e}; });
 const MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const MONTHS_FULL = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
 const DAYS = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
 const BRACKETS = [[150000,0],[300000,.05],[500000,.10],[750000,.15],[1000000,.20],[2000000,.25],[5000000,.30],[Infinity,.35]];
 const DEFAULT_TAX = {salary:0, spouse:false, kids:0, parents:0, sso:0, life:0, health:0, parentHealth:0, home:0, other:0, donation:0, wht:0, pnd94:0, evOnly:true};
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const B64_RE = /^[A-Za-z0-9+\/=]+$/;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const IS_FILE = location.protocol === 'file:';
 
-/* ---------- state ---------- */
-function loadLocal(){ try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
-function sampleState(){
-  const txns = []; let seed = 7;
-  const rnd = (a,b)=>{ seed = (seed*9301+49297)%233280; return Math.round((a + (b-a)*seed/233280)/10)*10; };
-  const y = new Date().getFullYear(), lastM = new Date().getMonth();
-  for (let m=0; m<Math.max(lastM,1); m++){
-    const d = (day)=> y+'-'+String(m+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
-    txns.push({d:d(3), t:'out', c:'banana', desc:'สวนลุงชม '+Math.round(rnd(700,1000)/10)+' หวี', amt:rnd(7500,11000), ev:true});
-    txns.push({d:d(4), t:'out', c:'package', desc:'ถุงซิปล็อก + ฉลาก', amt:rnd(1800,2800), ev:true});
-    txns.push({d:d(5), t:'out', c:'ingredient', desc:'น้ำผึ้งป่า', amt:rnd(900,1600), ev: m%3!==1});
-    txns.push({d:d(15), t:'in', c:'retail', desc:'ครึ่งเดือนแรก', amt:rnd(6500,9000), ev:true});
-    txns.push({d:d(18), t:'in', c:'wholesale', desc:'ร้านของฝากตลาดน้ำ', amt:rnd(14000,22000), ev:true});
-    txns.push({d:d(22), t:'in', c:'online', desc:'ยอดรวมทั้งเดือน', amt:rnd(6000,11000), ev:true});
-    txns.push({d:d(25), t:'out', c:'utility', desc:'ค่าไฟโรงอบ + แก๊ส', amt:rnd(1500,2200), ev:true});
-    txns.push({d:d(28), t:'out', c:'labor', desc:'คนช่วยปอก-ตาก 2 คน', amt:rnd(6000,7000), ev:m%4!==0});
-    txns.push({d:d(28), t:'out', c:'shipping', desc:'ค่าส่งพัสดุ', amt:rnd(600,1100), ev:true});
-    txns.push({d:d(28), t:'in', c:'retail', desc:'ครึ่งเดือนหลัง', amt:rnd(6000,9500), ev:true});
-  }
-  txns.forEach(t=>t.id=uid());
-  return {v:2, sample:true, savedAt:0, txns, tax:{}, pend:emptyPend()};
-}
-function emptyPend(){ return {up:[], del:[], tax:[], wipe:false}; }
-function freshState(){ return {v:2, sample:false, savedAt:0, txns:[], tax:{}, pend:emptyPend()}; }
+/* ---------- 2. small helpers ---------- */
+const esc = s => String(s==null ? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const round2 = n => Math.round(n*100)/100;
+const baht = (n, dec) => round2(n).toLocaleString('th-TH', {minimumFractionDigits:dec?2:0, maximumFractionDigits:dec?2:0});
+const be = y => +y + 543;
+const sum = (arr, f) => arr.reduce((a,x)=>a + (f ? f(x) : x), 0);
+const numOf = v => { const n = parseFloat(String(v==null ? '' : v).replace(/,/g,'')); return isFinite(n) ? n : 0; };
+const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const NOW = new Date(), TODAY = iso(NOW), YESTERDAY = iso(new Date(NOW.getTime()-864e5));
 function uid(){
   try { if (crypto.randomUUID) return crypto.randomUUID(); } catch(e){}
-  const b = new Uint8Array(16); crypto.getRandomValues(b); b[6]=(b[6]&15)|64; b[8]=(b[8]&63)|128;
+  const b = new Uint8Array(16); crypto.getRandomValues(b); b[6] = (b[6]&15)|64; b[8] = (b[8]&63)|128;
   const h = [...b].map(x=>x.toString(16).padStart(2,'0')).join('');
   return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
 }
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function dayLabel(d){
+  if (d===TODAY) return 'วันนี้'; if (d===YESTERDAY) return 'เมื่อวาน';
+  const [y,m,dd] = d.split('-').map(Number);
+  return 'วัน'+DAYS[new Date(y,m-1,dd).getDay()]+' '+dd+' '+MONTHS_FULL[m-1]+' '+be(y);
+}
+function shortDate(d){ if (d===TODAY) return 'วันนี้'; if (d===YESTERDAY) return 'เมื่อวาน'; const [y,m,dd] = d.split('-'); return (+dd)+' '+MONTHS[+m-1]+' '+String(be(y)).slice(2); }
+function thaiDate(d){ const [y,m,dd] = d.split('-').map(Number); return dd+' '+MONTHS[m-1]+' '+be(y); }
+function fmtAmt(v){
+  const raw = String(v).replace(/,/g,''); if (!isFinite(parseFloat(raw))) return '';
+  const [i,d] = raw.split('.'); return Number(i||0).toLocaleString('en-US') + (d!==undefined ? '.'+d.slice(0,2) : '');
+}
+function toast(msg){
+  const el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role','status'); el.textContent = msg;
+  document.body.appendChild(el); setTimeout(()=>el.remove(), 2200);
+}
+async function sha256hex(text){
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function lsGet(k){ try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
+function lsSet(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch(e){ return false; } }
+const ICON = {
+  home:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
+  list:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>',
+  tax:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="4" y="2.5" width="16" height="19" rx="2"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/></svg>',
+  backup:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg>',
+  plus:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  minus:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>',
+  logo:'<svg width="32" height="32" viewBox="0 0 46 46" aria-hidden="true"><path d="M8 29c7 7 20 6 26-5 2-4 2-9 1-11-1 6-6 12-13 14-5 1-10 1-14 2z" fill="#c98a12"/><path d="M34 12c1-2 3-3 5-3" stroke="#2e6a3a" stroke-width="3.5" stroke-linecap="round" fill="none"/></svg>'
+};
+
+/* ---------- 3. data on this device ---------- */
+const emptyPend = () => ({up:[], del:[], tax:[], wipe:false});
+const freshState = () => ({v:3, sample:false, txns:[], tax:{}, pend:emptyPend()});
 function cleanFiles(arr){
   return (Array.isArray(arr) ? arr : []).filter(f=>f && UUID_RE.test(String(f.id)) && +f.no>0 && +f.y>0)
     .map(f=>f.pending ? {id:f.id, y:+f.y, no:+f.no, pending:true} : {id:f.id, y:+f.y, no:+f.no});
 }
-function cleanItems(arr){
-  return (Array.isArray(arr) ? arr : []).filter(i=>i && String(i.n||'').trim() && +i.q>0 && +i.p>=0)
-    .map(i=>({n:String(i.n).trim().slice(0,100), q:Math.round(+i.q*1000)/1000, u:String(i.u||'').trim().slice(0,20), p:Math.round(+i.p*100)/100}));
+function cleanTxn(t){
+  if (!t || !DATE_RE.test(String(t.d)) || (t.t!=='in' && t.t!=='out') || !CAT[t.c] || !(+t.amt>0)) return null;
+  return {id: UUID_RE.test(String(t.id)) ? String(t.id) : uid(), d:String(t.d).slice(0,10), t:t.t, c:t.c,
+    desc:String(t.desc||'').slice(0,200), amt:round2(+t.amt), ev:t.ev!==false, files:cleanFiles(t.files)};
 }
-function normalize(s){
-  s.txns = Array.isArray(s.txns) ? s.txns : []; s.tax = s.tax || {};
-  const p = s.pend || emptyPend(); s.pend = {up:p.up||[], del:p.del||[], tax:p.tax||[], wipe:!!p.wipe};
-  s.txns.forEach(t=>{ if (!UUID_RE.test(String(t.id||''))){ const old=t.id; t.id=uid(); const i=s.pend.up.indexOf(old); if (i>=0) s.pend.up[i]=t.id; } t.amt=+t.amt; t.items=cleanItems(t.items); t.files=cleanFiles(t.files); });
-  return s;
+function normalizeState(s){
+  if (!s || !Array.isArray(s.txns)) return null;
+  const p = s.pend || {}, out = {v:3, sample:!!s.sample, txns:[], tax:{}, pend:{up:[], del:[], tax:[], wipe:!!p.wipe}};
+  const remap = {};
+  s.txns.forEach(raw=>{ const t = cleanTxn(raw); if (!t) return; if (raw.id!==t.id) remap[raw.id] = t.id; out.txns.push(t); });
+  const ids = new Set(out.txns.map(t=>t.id));
+  out.pend.up = [...new Set((p.up||[]).map(id=>remap[id]||id).filter(id=>ids.has(id)))];
+  out.pend.del = [...new Set((p.del||[]).filter(id=>UUID_RE.test(String(id))))];
+  out.pend.tax = [...new Set((p.tax||[]).map(Number).filter(y=>y>2000))];
+  if (s.tax && typeof s.tax === 'object') Object.keys(s.tax).forEach(y=>{ if (+y>2000) out.tax[y] = Object.assign({}, DEFAULT_TAX, s.tax[y]); });
+  // local data from an older version that never reached the database: queue it
+  if (!out.sample && s.v !== 3 && !(s.pend)) out.txns.forEach(t=>out.pend.up.push(t.id));
+  return out;
 }
-let state = normalize(loadLocal() || sampleState());
+function sampleState(){
+  const txns = []; let seed = 7;
+  const rnd = (a,b)=>{ seed = (seed*9301+49297)%233280; return Math.round((a + (b-a)*seed/233280)/10)*10; };
+  const y = NOW.getFullYear(), months = Math.max(NOW.getMonth(), 1);
+  for (let m=0; m<months; m++){
+    const d = day => y+'-'+String(m+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    const add = (day,t,c,desc,amt,ev) => txns.push({id:uid(), d:d(day), t, c, desc, amt, ev:ev!==false, files:[]});
+    add(3,'out','banana','สวนลุงชม '+Math.round(rnd(700,1000)/10)+' หวี', rnd(7500,11000));
+    add(4,'out','package','ถุงซิปล็อก + ฉลาก', rnd(1800,2800));
+    add(5,'out','ingredient','น้ำผึ้งป่า', rnd(900,1600), m%3!==1);
+    add(15,'in','retail','ครึ่งเดือนแรก', rnd(6500,9000));
+    add(18,'in','wholesale','ร้านของฝากตลาดน้ำ', rnd(14000,22000));
+    add(22,'in','online','ยอดรวมทั้งเดือน', rnd(6000,11000));
+    add(25,'out','utility','ค่าไฟโรงอบ + แก๊ส', rnd(1500,2200));
+    add(28,'out','labor','คนช่วยปอก-ตาก 2 คน', rnd(6000,7000), m%4!==0);
+    add(28,'out','shipping','ค่าส่งพัสดุ', rnd(600,1100));
+    add(28,'in','retail','ครึ่งเดือนหลัง', rnd(6000,9500));
+  }
+  return {v:3, sample:true, txns, tax:{}, pend:emptyPend()};
+}
+let state = normalizeState(lsGet(CFG.lsState)) || sampleState();
+const saveLocal = () => lsSet(CFG.lsState, state);
+const txYear = y => state.txns.filter(t=>+t.d.slice(0,4)===+y);
+function years(){ const s = new Set(state.txns.map(t=>+t.d.slice(0,4))); s.add(NOW.getFullYear()); return [...s].sort((a,b)=>b-a); }
+function pickDefaultYear(){ const ys = years(); return ys.includes(NOW.getFullYear()) ? NOW.getFullYear() : ys[0]; }
+const taxSet = y => Object.assign({}, DEFAULT_TAX, state.tax[y]||{});
+const byNewest = (a,b) => b.d.localeCompare(a.d) || (b.id > a.id ? 1 : -1);
 
-const now = new Date();
-const iso = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
-const TODAY = iso(now), YESTERDAY = iso(new Date(now.getTime()-864e5));
-const ui = { tab:'overview', year:pickDefaultYear(), fMonth:'all', fType:'all', fText:'', confirmWipe:false, save:'saved', sheet:null, auth:null, skipLogin:false, members:null, membersErr:'' };
-function pickDefaultYear(){ const ys = years(), cy = now.getFullYear(); return ys.includes(cy) ? cy : ys[0]; }
-function years(){ const s = new Set(state.txns.map(t=>+t.d.slice(0,4))); s.add(now.getFullYear()); return [...s].sort((a,b)=>b-a); }
-function taxSet(y){ return Object.assign({}, DEFAULT_TAX, state.tax[y]||{}); }
+/* ---------- 4. screen state ---------- */
+const ui = {tab:'overview', year:pickDefaultYear(), fMonth:'all', fType:'all', fText:'', confirmWipe:false,
+  sheet:null, auth:null, skipLogin:false, members:null, membersLoading:false, membersErr:''};
+const sync = {status:'connecting', err:null, lastSync:0, flushing:false, pulling:false, timer:null};
 
-/* ---------- persistence ---------- */
-/* Data lives in Supabase project kluaytak-khunya. Every read/write goes through the
-   public.app_* database functions, which check who is calling. Two ways in:
-   - inside Claude: the viewer's Supabase connector runs "select public.app_*(...)"
-   - as a normal web page: supabase-js with e-mail sign-in calls the same functions (RPC)
-   localStorage is a cache + offline queue. */
-const SB = {server:'Supabase', tool:'execute_sql', project:'iyyjazdmdtdbrbwlteng',
-  url:'https://iyyjazdmdtdbrbwlteng.supabase.co', key:'sb_publishable_Rh9QpLRtF5TvXje6G1mDCA_8_9sP0IB',
-  lib:'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js'};
-const WEB_URL = 'https://wongjinda.github.io/kluaytak-khunya/';
-let conn = null, mode = 'detecting', sbClient = null, me = null, signingIn = false;
-let saveTimer = null, capChecked = false, syncing = false, lastErr = null, lastSync = 0;
-function storeLocal(){ try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e){} }
-function pendCount(){ const p = state.pend; return p.up.length + p.del.length + p.tax.length + (p.wipe?1:0); }
+/* ---------- 5. database connection (two transports, same app_* functions) ---------- */
+let mode = 'detecting';   // 'claude' | 'web'
+let api = null;           // set once connected
+let sb = null, me = null, signingIn = false;
+
+function dq(s){ s = String(s); let tag; do { tag = 'kt'+Math.random().toString(36).slice(2,8); } while (s.includes('$'+tag+'$')); return '$'+tag+'$'+s+'$'+tag+'$'; }
+const jsonbLit = v => dq(JSON.stringify(v))+'::jsonb';
+function b64utf8(b){ const bin = atob(b), bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
+function connectorText(res){
+  let txt = res && res.payload;
+  if (txt && typeof txt === 'object' && typeof txt.result === 'string') txt = txt.result;
+  if (typeof txt !== 'string') txt = ((res && res.content) || []).map(c=>c.text||'').join('\n');
+  return String(txt).replace(/\\"/g,'"');
+}
+function connectorApi(m){
+  const run = q => m.callTool(CFG.connector, CFG.connectorTool, {project_id:CFG.project, query:q}, {cache:false});
+  const get = async expr => {   // results travel base64-encoded so user text can never break parsing
+    const txt = connectorText(await run("select translate(encode(convert_to(coalesce(to_json("+expr+")::text,'null'),'UTF8'),'base64'),E'\\n','') as b64;"));
+    const mm = txt.match(/"b64"\s*:\s*"([A-Za-z0-9+\/=]*)"/); if (!mm) throw {code:'parse_error'};
+    return JSON.parse(b64utf8(mm[1]));
+  };
+  const id = v => { if (!UUID_RE.test(String(v))) throw {code:'bad_request'}; return "'"+v+"'::uuid"; };
+  return {
+    pull: ()=>get('public.app_pull()'),
+    push: p=>run('select public.app_push('+jsonbLit(p)+');'),
+    reserve: y=>get('public.app_reserve_evidence_no('+(+y|0)+')'),
+    addEvidence: (txn, ev)=>run('select public.app_add_evidence('+jsonbLit(txn)+','+jsonbLit(ev)+');'),
+    deleteEvidence: e=>run('select public.app_delete_evidence('+id(e)+');'),
+    thumbs: t=>get('public.app_evidence_thumbs('+id(t)+')'),
+    image: e=>get('public.app_evidence_image('+id(e)+')'),
+    whoami: ()=>get('public.app_whoami()'),
+    members: ()=>get('public.app_members_list()'),
+    memberAdd: e=>run('select public.app_member_add('+dq(e)+');'),
+    memberRemove: e=>run('select public.app_member_remove('+dq(e)+');')
+  };
+}
+function mapRpcError(e){
+  const msg = String((e && (e.message || e.details)) || '');
+  for (const c of ['not_member','not_owner','bad_email']) if (msg.includes(c)) return {code:c};
+  if ((e && e.code==='PGRST301') || /jwt|not authenticated/i.test(msg)) return {code:'signed_out'};
+  if (/Failed to fetch|NetworkError|network|Load failed/i.test(msg)) return {code:'server_unavailable'};
+  return {code:'tool_error', message:msg};
+}
+function webApi(client){
+  const call = async (fn, args) => {
+    let r; try { r = await client.rpc(fn, args||{}); } catch(e){ throw mapRpcError(e); }
+    if (r.error) throw mapRpcError(r.error);
+    return r.data;
+  };
+  return {
+    pull: ()=>call('app_pull'), push: p=>call('app_push', {p}),
+    reserve: y=>call('app_reserve_evidence_no', {y}),
+    addEvidence: (txn, ev)=>call('app_add_evidence', {txn, ev}), deleteEvidence: eid=>call('app_delete_evidence', {eid}),
+    thumbs: txn=>call('app_evidence_thumbs', {txn}), image: eid=>call('app_evidence_image', {eid}),
+    whoami: ()=>call('app_whoami'), members: ()=>call('app_members_list'),
+    memberAdd: e=>call('app_member_add', {member_email:e}), memberRemove: e=>call('app_member_remove', {member_email:e})
+  };
+}
+function errText(e){
+  return ({
+    needs_reauth:'การเชื่อมต่อ Supabase หมดอายุ เชื่อมใหม่ที่ Settings → Connectors',
+    server_not_connected:'ยังไม่ได้เพิ่ม Supabase ที่ Settings → Connectors (ข้อมูลอยู่ในเครื่องนี้)',
+    selection_required:'มี Supabase หลายบัญชี เลือกบัญชีที่จะใช้ก่อน',
+    not_in_manifest:'ยังไม่ได้อนุญาตให้หน้านี้ใช้ Supabase (ข้อมูลอยู่ในเครื่องนี้)',
+    approval_required:'ต้องกดอนุญาตก่อนบันทึกลงฐานข้อมูล',
+    blocked_by_policy:'องค์กรไม่อนุญาตให้ใช้ Supabase จากหน้านี้',
+    tool_error:'ฐานข้อมูลไม่รับรายการนี้ ข้อมูลยังอยู่ในเครื่อง',
+    parse_error:'อ่านข้อมูลจากฐานข้อมูลไม่ได้',
+    server_unavailable:'ติดต่อฐานข้อมูลไม่ได้ชั่วคราว ข้อมูลยังอยู่ในเครื่อง',
+    not_member:'อีเมลนี้ยังไม่ได้รับสิทธิ์ใช้งาน',
+    not_owner:'ทำรายการนี้ได้เฉพาะเจ้าของร้าน ข้อมูลยังอยู่ในเครื่อง',
+    signed_out:'หมดเวลาเข้าสู่ระบบ เข้าสู่ระบบใหม่อีกครั้ง',
+    bad_email:'รูปแบบอีเมลไม่ถูกต้อง'
+  })[e && e.code] || 'บันทึกลงฐานข้อมูลไม่สำเร็จ ข้อมูลยังอยู่ในเครื่อง';
+}
+
+/* ---------- 6. sync: local queue → database, database → screen ---------- */
+const pendCount = () => { const p = state.pend; return p.up.length + p.del.length + p.tax.length + (p.wipe?1:0); };
 function markDirty(ch){
-  state.savedAt = Date.now();
   ch = ch || {};
   if (ch.wipe) state.pend = {up:[], del:[], tax:[], wipe:true};
   const p = state.pend;
@@ -334,187 +458,134 @@ function markDirty(ch){
     state.txns.forEach(t=>{ if (!p.up.includes(t.id)) p.up.push(t.id); });
     Object.keys(state.tax).forEach(y=>{ if (!p.tax.includes(+y)) p.tax.push(+y); });
   }
-  storeLocal();
-  if (state.sample) return;
-  if (!conn){ ui.save = capChecked ? 'local' : ui.save; updateSave(); return; }
-  if (ui.save !== 'error') ui.save = 'dirty';
-  updateSave(); scheduleSave();
+  saveLocal();
+  if (state.sample) return updateStatus();
+  if (!api){ if (mode!=='detecting') sync.status = 'local'; return updateStatus(); }
+  if (sync.status !== 'error') sync.status = 'dirty';
+  updateStatus(); scheduleFlush();
 }
-function scheduleSave(){ if (!conn || state.sample || !pendCount()) return; clearTimeout(saveTimer); saveTimer = setTimeout(()=>flush(false), 1500); }
-function busy(){
+function scheduleFlush(){ if (!api || state.sample || !pendCount()) return; clearTimeout(sync.timer); sync.timer = setTimeout(()=>flush(false), 1500); }
+function userIsTyping(){
   if (ui.sheet) return true;
   const a = document.activeElement;
   return !!(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type!=='checkbox');
 }
-function txRow(t){ return {id:t.id, d:t.d, t:t.t, c:t.c, desc:(t.desc||'').slice(0,200), amt:Math.round(t.amt*100)/100, ev:!!t.ev, items:cleanItems(t.items)}; }
-function buildPush(p){
-  const ups = p.up.map(id=>state.txns.find(t=>t.id===id)).filter(Boolean).map(txRow);
-  const tax = p.tax.map(y=>{ const s = taxSet(y); return {y:+y, salary:+s.salary||0, spouse:!!s.spouse, kids:Math.floor(+s.kids||0), parents:Math.floor(+s.parents||0), sso:+s.sso||0, life:+s.life||0, health:+s.health||0,
-    parentHealth:+s.parentHealth||0, home:+s.home||0, other:+s.other||0, donation:+s.donation||0, wht:+s.wht||0, pnd94:+s.pnd94||0, evOnly:s.evOnly!==false}; });
-  const empty = !p.wipe && !p.del.length && !ups.length && !tax.length;
-  return {payload: empty ? null : {wipe:!!p.wipe, del:p.del, ups, tax}, sent:Object.fromEntries(ups.map(r=>[r.id, JSON.stringify(r)]))};
-}
-function normalizePull(d){
-  d = d || {};
-  return {txns:(d.txns||[]).map(t=>({id:t.id, d:String(t.d).slice(0,10), t:t.t, c:t.c, desc:t.desc||'', amt:+t.amt, ev:!!t.ev, items:cleanItems(t.items), files:cleanFiles(t.files)})), tax:d.tax||{}};
-}
-/* -- transport 1: Supabase connector inside Claude (SQL text; values travel as dollar-quoted literals) -- */
-function dq(s){ s = String(s); let tag; do { tag = 'kt'+Math.random().toString(36).slice(2,8); } while (s.includes('$'+tag+'$')); return '$'+tag+'$'+s+'$'+tag+'$'; }
-function lit(v){ return dq(JSON.stringify(v))+'::jsonb'; }
-function b64utf8(b){ const bin = atob(b), bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
-function makeConnectorApi(m){
-  const run = q => m.callTool(SB.server, SB.tool, {project_id:SB.project, query:q}, {cache:false});
-  const get = async expr => {
-    const txt = sqlText(await run("select translate(encode(convert_to(coalesce(to_json("+expr+")::text,'null'),'UTF8'),'base64'),E'\\n','') as b64;"));
-    const mm = txt.match(/"b64"\s*:\s*"([A-Za-z0-9+\/=]*)"/); if (!mm) throw {code:'parse_error'};
-    return JSON.parse(b64utf8(mm[1]));
-  };
-  const id = v => { if (!UUID_RE.test(String(v))) throw {code:'bad_request'}; return "'"+v+"'::uuid"; };
-  return { kind:'connector',
-    pull: ()=>get('public.app_pull()'),
-    push: p=>run('select public.app_push('+lit(p)+');'),
-    reserve: y=>get('public.app_reserve_evidence_no('+(+y|0)+')'),
-    addEv: (txn, ev)=>run('select public.app_add_evidence('+lit(txn)+','+lit(ev)+');'),
-    delEv: e=>run('select public.app_delete_evidence('+id(e)+');'),
-    thumbs: t=>get('public.app_evidence_thumbs('+id(t)+')'),
-    image: e=>get('public.app_evidence_image('+id(e)+')'),
-    whoami: ()=>get('public.app_whoami()'),
-    members: ()=>get('public.app_members_list()'),
-    memberAdd: e=>run('select public.app_member_add('+dq(e)+');'),
-    memberRemove: e=>run('select public.app_member_remove('+dq(e)+');') };
-}
-/* -- transport 2: supabase-js with e-mail sign-in (standalone web page) -- */
-function mapErr(e){
-  const msg = String((e && (e.message || e.details)) || '');
-  if (/not_member/.test(msg)) return {code:'not_member'};
-  if (/not_owner/.test(msg)) return {code:'not_owner'};
-  if (/bad_email/.test(msg)) return {code:'bad_email'};
-  if ((e && e.code==='PGRST301') || /jwt|JWT|not authenticated/i.test(msg)) return {code:'signed_out'};
-  if (/Failed to fetch|NetworkError|network|Load failed/i.test(msg)) return {code:'server_unavailable'};
-  return {code:'tool_error', message:msg};
-}
-function makeDirectApi(c){
-  const call = async (fn, args) => { let r; try { r = await c.rpc(fn, args||{}); } catch(e){ throw mapErr(e); } if (r.error) throw mapErr(r.error); return r.data; };
-  return { kind:'direct',
-    pull: ()=>call('app_pull'), push: p=>call('app_push',{p}), reserve: y=>call('app_reserve_evidence_no',{y}),
-    addEv: (txn, ev)=>call('app_add_evidence',{txn, ev}), delEv: eid=>call('app_delete_evidence',{eid}),
-    thumbs: txn=>call('app_evidence_thumbs',{txn}), image: eid=>call('app_evidence_image',{eid}),
-    whoami: ()=>call('app_whoami'), members: ()=>call('app_members_list'),
-    memberAdd: e=>call('app_member_add',{member_email:e}), memberRemove: e=>call('app_member_remove',{member_email:e}) };
+const txRow = t => ({id:t.id, d:t.d, t:t.t, c:t.c, desc:t.desc, amt:t.amt, ev:!!t.ev, items:[]});
+function taxRow(y){
+  const s = taxSet(y);
+  return {y:+y, salary:+s.salary||0, spouse:!!s.spouse, kids:Math.floor(+s.kids||0), parents:Math.floor(+s.parents||0), sso:+s.sso||0,
+    life:+s.life||0, health:+s.health||0, parentHealth:+s.parentHealth||0, home:+s.home||0, other:+s.other||0,
+    donation:+s.donation||0, wht:+s.wht||0, pnd94:+s.pnd94||0, evOnly:s.evOnly!==false};
 }
 async function flush(force){
-  if (!conn || syncing || state.sample || !pendCount()) return true;
-  if (!force && busy()){ scheduleSave(); return false; }
-  syncing = true; ui.save = 'saving'; updateSave();
+  if (!api || sync.flushing || state.sample || !pendCount()) return true;
+  if (!force && userIsTyping()){ scheduleFlush(); return false; }
+  sync.flushing = true; sync.status = 'saving'; updateStatus();
   const snap = JSON.parse(JSON.stringify(state.pend));
-  const {payload, sent} = buildPush(snap);
+  const ups = snap.up.map(id=>state.txns.find(t=>t.id===id)).filter(Boolean).map(txRow);
+  const sent = Object.fromEntries(ups.map(r=>[r.id, JSON.stringify(r)]));
   let ok = false;
   try {
-    if (payload) await conn.push(payload);
+    await api.push({wipe:snap.wipe, del:snap.del, ups, tax:snap.tax.map(taxRow)});
     const p = state.pend;
     if (snap.wipe) p.wipe = false;
     p.del = p.del.filter(x=>!snap.del.includes(x));
     p.tax = p.tax.filter(x=>!snap.tax.includes(x));
+    // keep an id queued if it was edited again while this save was in flight
     p.up = p.up.filter(id=>{ if (!snap.up.includes(id)) return true; const t = state.txns.find(x=>x.id===id); return !!(t && sent[id] && JSON.stringify(txRow(t))!==sent[id]); });
-    storeLocal(); lastErr = null; lastSync = Date.now(); ok = true;
-    ui.save = pendCount() ? 'dirty' : 'saved';
-  } catch(e){ lastErr = e || {code:'upstream_error'}; ui.save = 'error'; handleAuthErr(e); }
-  syncing = false; updateSave();
-  if (ok && pendCount()) scheduleSave();
+    saveLocal(); ok = true; sync.err = null; sync.lastSync = Date.now();
+    sync.status = pendCount() ? 'dirty' : 'saved';
+  } catch(e){ fail(e); }
+  sync.flushing = false; updateStatus();
+  if (ok && pendCount()) scheduleFlush();
   return ok;
 }
-async function syncNow(initial){
-  if (!conn || syncing) return;
-  clearTimeout(saveTimer);
-  if (!state.sample && pendCount()){ const ok = await flush(true); if (!ok) return; }
-  syncing = true; ui.save = 'saving'; updateSave();
+async function syncNow(firstRun){
+  if (!api || sync.pulling) return;
+  clearTimeout(sync.timer);
+  if (!state.sample && pendCount() && !(await flush(true))) return;
+  sync.pulling = true; sync.status = 'saving'; updateStatus();
   try {
-    const db = normalizePull(await conn.pull());
-    syncing = false;
-    if (db.txns.length || Object.keys(db.tax).length){
-      state.txns = db.txns; state.tax = db.tax; state.sample = false; state.pend = emptyPend();
-      lastSync = Date.now(); ui.save = 'saved';
-      if (!years().includes(+ui.year)) ui.year = pickDefaultYear();
-    } else if (!state.sample && state.txns.length && initial){
-      markDirty({all:true}); await flush(true);   // first run: move this device's data into Supabase
-    } else { lastSync = Date.now(); ui.save = 'saved'; }
-    mergeEvPending(); storeLocal(); render(); uploadEvidence();
-  } catch(e){ syncing = false; lastErr = e || {code:'upstream_error'}; ui.save = 'error'; updateSave(); handleAuthErr(e); }
+    const db = await api.pull();
+    const txns = (db && Array.isArray(db.txns) ? db.txns : []).map(cleanTxn).filter(Boolean);
+    const tax = {}; Object.keys((db && db.tax) || {}).forEach(y=>{ tax[y] = Object.assign({}, DEFAULT_TAX, db.tax[y]); });
+    if (txns.length || Object.keys(tax).length){
+      state = {v:3, sample:false, txns, tax, pend:emptyPend()};
+    } else if (firstRun && !state.sample && state.txns.length){
+      markDirty({all:true});            // empty database + real local data: upload it
+    }
+    mergeEvidenceQueue(); saveLocal();
+    if (!years().includes(+ui.year)) ui.year = pickDefaultYear();
+    sync.err = null; sync.lastSync = Date.now(); sync.status = pendCount() && !state.sample ? 'dirty' : 'saved';
+  } catch(e){ fail(e); }
+  sync.pulling = false;
+  if (!ui.sheet) render(); else updateStatus();
+  if (pendCount() && !state.sample) flush(true);
+  uploadEvidence();
 }
-function handleAuthErr(e){
-  if (mode!=='web' || !e) return;
-  if (e.code==='not_member'){ conn = null; ui.auth = {step:'denied', email: me && me.email}; render(); }
-  if (e.code==='signed_out'){ conn = null; ui.auth = {step:'email'}; render(); }
+function fail(e){
+  sync.err = e || {code:'upstream_error'}; sync.status = 'error';
+  // a refused wipe/restore must not leave this device empty: drop it so "ลองอีกครั้ง" reloads the real data
+  if (sync.err.code==='not_owner' && state.pend.wipe){ state.pend = emptyPend(); saveLocal(); }
+  if (mode==='web' && (sync.err.code==='not_member' || sync.err.code==='signed_out')){
+    api = null; ui.auth = sync.err.code==='not_member' ? {step:'denied', email: me && me.email} : {step:'email'};
+    if (!ui.sheet) render();
+  }
 }
-document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState==='hidden' && pendCount() && conn){ clearTimeout(saveTimer); flush(true); }});
-function loadScript(src){ return new Promise((res, rej)=>{ const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
-async function startConnector(m){
-  conn = makeConnectorApi(m); mode = 'claude'; capChecked = true;
-  syncNow(true);
-  try { me = await conn.whoami(); } catch(e){ me = {role:'owner'}; }
-}
-async function initDirect(){
-  mode = 'web';
-  try { await loadScript(SB.lib); } catch(e){ capChecked = true; ui.save = 'local'; lastErr = {code:'server_unavailable'}; render(); return; }
-  sbClient = window.supabase.createClient(SB.url, SB.key, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit'}});
-  sbClient.auth.onAuthStateChange((ev, session)=>{
-    if (session && (ev==='SIGNED_IN' || ev==='INITIAL_SESSION')) setTimeout(()=>onSignedIn(session), 0);
-    if (ev==='SIGNED_OUT'){ conn = null; me = null; ui.auth = {step:'email'}; ui.save = 'local'; render(); }
-  });
-  let session = null;
-  try { session = (await sbClient.auth.getSession()).data.session; } catch(e){}
-  capChecked = true;
-  if (session) onSignedIn(session); else { ui.auth = ui.auth || {step:'email'}; ui.save = 'local'; render(); }
-}
-async function onSignedIn(session){
-  if (conn || signingIn) return;
-  signingIn = true; ui.auth = {step:'checking'}; render();
-  const api = makeDirectApi(sbClient);
-  try { me = await api.whoami(); } catch(e){ me = null; }
-  signingIn = false;
-  if (!me || !me.role){ ui.auth = {step:'denied', email:(session.user && session.user.email) || (me && me.email)}; ui.save = 'local'; render(); return; }
-  if (/access_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-  conn = api; ui.auth = null; ui.skipLogin = false; render(); syncNow(true);
-}
-(function initCap(tries){
-  if (window.claude && typeof window.claude.use === 'function'){
-    mode = 'claude';
-    window.claude.use('mcp').then(m=>{ capChecked = true;
-      if (!m){ ui.save = 'local'; updateSave(); return; }
-      startConnector(m);
-    }).catch(()=>{ capChecked = true; ui.save = 'local'; updateSave(); });
-  } else if (tries < 6){ setTimeout(()=>initCap(tries+1), 250); }
-  else initDirect();
-})(0);
+document.addEventListener('visibilitychange', ()=>{
+  if (!api) return;
+  if (document.visibilityState==='hidden' && pendCount()){ clearTimeout(sync.timer); flush(true); }
+  // coming back to the app: fetch what others recorded meanwhile
+  if (document.visibilityState==='visible' && !ui.sheet && Date.now()-sync.lastSync > 60000) syncNow(false);
+});
 
-/* ---------- evidence photos (receipts / transfer slips) ---------- */
-/* Each photo gets a running number per year from public.evidence_counters, is stamped with it
-   as a watermark in the browser, then stored (image + thumbnail) in public.evidence. */
-const LS_EV = 'kluaytak-khunya-evidence-pending';
+/* ---------- 7. evidence photos (receipts / transfer slips) ---------- */
+/* Each photo gets the next number of its year from the database, is stamped with
+   "หลักฐานลำดับที่ <ปี>-<เลข>" in the browser, then stored with its thumbnail. */
+let evQueue = (()=>{ const a = lsGet(CFG.lsEvidence); return Array.isArray(a) ? a : []; })();
+let evUploading = false;
 const thumbCache = new Map();
-let evOps = (function(){ try { const a = JSON.parse(localStorage.getItem(LS_EV)||'[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; } })();
-let evUploading = false, evMemOnly = false;
-evOps.forEach(o=>{ if (o.op==='add' && o.thumb) thumbCache.set(o.id, 'data:image/jpeg;base64,'+o.thumb); });
-function storeEvOps(){ try { localStorage.setItem(LS_EV, JSON.stringify(evOps)); evMemOnly = false; } catch(e){ evMemOnly = true; } }
-const B64_RE = /^[A-Za-z0-9+\/=]+$/;
+evQueue.forEach(o=>{ if (o.op==='add' && o.thumb) thumbCache.set(o.id, 'data:image/jpeg;base64,'+o.thumb); });
 const evCode = f => be(f.y)+'-'+String(f.no).padStart(4,'0');
-function sqlText(res){
-  let txt = res && res.payload;
-  if (txt && typeof txt === 'object' && typeof txt.result === 'string') txt = txt.result;
-  if (typeof txt !== 'string') txt = ((res && res.content) || []).map(c=>c.text||'').join('\n');
-  return String(txt).replace(/\\"/g,'"');
+function saveEvQueue(){ return lsSet(CFG.lsEvidence, evQueue); }
+function mergeEvidenceQueue(){
+  evQueue.forEach(o=>{
+    const t = state.txns.find(x=>x.id===o.txn); if (!t) return;
+    if (o.op==='add' && !t.files.some(f=>f.id===o.id)) t.files.push({id:o.id, y:o.y, no:o.no, pending:true});
+    if (o.op==='del') t.files = t.files.filter(f=>f.id!==o.id);
+  });
 }
-async function reserveEvNo(y){
-  const n = +(await conn.reserve(y));
-  if (!(n > 0)) throw {code:'parse_error'};
-  return n;
+function queueEvidence(txnId, adds, dels){
+  dels.forEach(id=>{ const i = evQueue.findIndex(o=>o.op==='add' && o.id===id); if (i>=0) evQueue.splice(i,1); else evQueue.push({op:'del', id, txn:txnId}); });
+  adds.forEach(a=>evQueue.push({op:'add', id:a.id, txn:txnId, y:a.y, no:a.no, b64:a.b64, thumb:a.thumb, w:a.w, h:a.h, size:a.size}));
+  if (!saveEvQueue()) toast('เครื่องนี้พื้นที่เต็ม รูปจะอยู่จนกว่าจะปิดหน้านี้ ถ้ายังอัปโหลดไม่เสร็จ');
+  uploadEvidence();
+}
+async function uploadEvidence(){
+  if (!api || evUploading || !evQueue.length) return;
+  evUploading = true; updateStatus();
+  try {
+    while (evQueue.length){
+      const o = evQueue[0], t = state.txns.find(x=>x.id===o.txn);
+      if (o.op==='del'){ if (UUID_RE.test(o.id)) await api.deleteEvidence(o.id); }
+      else if (t && UUID_RE.test(o.id) && B64_RE.test(o.b64||'') && B64_RE.test(o.thumb||'')){
+        await api.addEvidence(txRow(t), {id:o.id, y:+o.y, no:+o.no, w:+o.w||0, h:+o.h||0, size:+o.size||0, b64:o.b64, thumb:o.thumb});
+        const f = t.files.find(x=>x.id===o.id); if (f) delete f.pending;
+      }
+      evQueue.shift(); saveEvQueue(); saveLocal();
+    }
+    if (sync.status==='error'){ sync.err = null; sync.status = pendCount() ? 'dirty' : 'saved'; }
+  } catch(e){ fail(e); }
+  evUploading = false;
+  if (!ui.sheet) render(); else updateStatus();
 }
 function loadImage(file){
   return new Promise((res, rej)=>{ const url = URL.createObjectURL(file), img = new Image();
-    img.onload = ()=>{ URL.revokeObjectURL(url); res(img); }; img.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('image')); }; img.src = url; });
+    img.onload = ()=>{ URL.revokeObjectURL(url); res(img); };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('image')); };
+    img.src = url; });
 }
-function fitFont(g, text, weight, size, maxW, fam){ let s = size; g.font = weight+' '+s+'px '+fam; while (g.measureText(text).width > maxW && s > 10){ s -= 2; g.font = weight+' '+s+'px '+fam; } return s; }
-function thaiDate(d){ const [y,m,dd] = d.split('-').map(Number); return dd+' '+MONTHS[m-1]+' '+be(y); }
+function fitFont(g, text, weight, size, maxW, fam){ let s = size; g.font = weight+' '+s+'px '+fam; while (g.measureText(text).width > maxW && s > 10){ s -= 2; g.font = weight+' '+s+'px '+fam; } }
 async function stampImage(file, code, kind, d){
   const img = await loadImage(file);
   try { await document.fonts.load('600 40px "IBM Plex Sans Thai"'); } catch(e){}
@@ -522,10 +593,10 @@ async function stampImage(file, code, kind, d){
   let scale = Math.min(1, 1600/Math.max(img.naturalWidth, img.naturalHeight));
   for (let attempt=0; attempt<4; attempt++){
     const W = Math.max(1, Math.round(img.naturalWidth*scale)), H = Math.max(1, Math.round(img.naturalHeight*scale));
-    const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
-    g.fillStyle = '#fff'; g.fillRect(0,0,W,H); g.drawImage(img, 0, 0, W, H);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0,0,W,H); g.drawImage(img, 0, 0, W, H);
     const u = Math.max(W,H)/100;
-    // faint diagonal repeat so the slip cannot be reused without the number showing
+    // faint diagonal repeat: the slip cannot be reused without the number showing
     g.save(); g.translate(W/2, H/2); g.rotate(-Math.PI/6); g.textAlign = 'center'; g.textBaseline = 'middle';
     g.font = '600 '+Math.round(u*3.6)+'px '+FAM; g.lineWidth = Math.max(1, u*.12);
     const span = Math.hypot(W,H), mark = 'หลักฐาน '+code;
@@ -537,141 +608,89 @@ async function stampImage(file, code, kind, d){
     const bh = Math.max(70, Math.round(u*12)), pad = Math.round(u*3);
     g.fillStyle = 'rgba(30,20,8,.78)'; g.fillRect(0, H-bh, W, bh);
     g.fillStyle = '#f5b301'; g.fillRect(0, H-bh, Math.max(6, Math.round(u)), bh);
-    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
-    const l1 = 'หลักฐานลำดับที่ '+code, l2 = 'กล้วยตากคุณย่า · '+(kind==='in'?'รายรับ':'รายจ่าย')+' วันที่ '+thaiDate(d)+' · แนบเมื่อ '+thaiDate(TODAY)+' '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
-    fitFont(g, l1, '600', Math.round(bh*.38), W-pad*2, FAM); g.fillText(l1, pad, H-bh*.46);
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    const l1 = 'หลักฐานลำดับที่ '+code;
+    const l2 = 'กล้วยตากคุณย่า · '+(kind==='in'?'รายรับ':'รายจ่าย')+' วันที่ '+thaiDate(d)+' · แนบเมื่อ '+thaiDate(TODAY)+' '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'});
+    fitFont(g, l1, '600', Math.round(bh*.38), W-pad*2, FAM); g.fillStyle = '#fff'; g.fillText(l1, pad, H-bh*.46);
     fitFont(g, l2, '400', Math.round(bh*.2), W-pad*2, FAM); g.fillStyle = 'rgba(255,255,255,.88)'; g.fillText(l2, pad, H-bh*.15);
     let q = .82, b64 = c.toDataURL('image/jpeg', q).split(',')[1];
     while (b64.length > 650000 && q > .5){ q -= .1; b64 = c.toDataURL('image/jpeg', q).split(',')[1]; }
     if (b64.length > 650000){ scale *= .75; continue; }
     const ts = Math.min(1, 320/Math.max(W,H)), tc = document.createElement('canvas');
-    tc.width = Math.max(1, Math.round(W*ts)); tc.height = Math.max(1, Math.round(H*ts)); tc.getContext('2d').drawImage(c, 0, 0, tc.width, tc.height);
+    tc.width = Math.max(1, Math.round(W*ts)); tc.height = Math.max(1, Math.round(H*ts));
+    tc.getContext('2d').drawImage(c, 0, 0, tc.width, tc.height);
     return {b64, thumb:tc.toDataURL('image/jpeg', .7).split(',')[1], w:W, h:H, size:Math.floor(b64.length*3/4)};
   }
   throw new Error('too_big');
 }
-function evPendingCount(){ return evOps.length; }
-function mergeEvPending(){
-  evOps.forEach(o=>{
-    const t = state.txns.find(x=>x.id===o.txn); if (!t) return;
-    t.files = t.files || [];
-    if (o.op==='add' && !t.files.some(f=>f.id===o.id)) t.files.push({id:o.id, y:o.y, no:o.no, pending:true});
-    if (o.op==='del') t.files = t.files.filter(f=>f.id!==o.id);
-  });
-}
-function queueEvidence(txnId, adds, dels){
-  dels.forEach(id=>{ const i = evOps.findIndex(o=>o.op==='add' && o.id===id); if (i>=0) evOps.splice(i,1); else evOps.push({op:'del', id, txn:txnId}); });
-  adds.forEach(a=>evOps.push({op:'add', id:a.id, txn:txnId, y:a.y, no:a.no, b64:a.b64, thumb:a.thumb, w:a.w, h:a.h, size:a.size}));
-  storeEvOps();
-  if (evMemOnly) toast('เครื่องนี้พื้นที่เต็ม รูปจะอยู่จนกว่าจะปิดหน้านี้ ถ้ายังอัปโหลดไม่เสร็จ');
-  uploadEvidence();
-}
-async function uploadEvidence(){
-  if (!conn || evUploading || !evOps.length) return;
-  evUploading = true; updateSave();
-  try {
-    while (evOps.length){
-      const o = evOps[0];
-      const t = state.txns.find(x=>x.id===o.txn);
-      if (o.op==='del'){
-        if (UUID_RE.test(o.id)) await conn.delEv(o.id);
-      } else if (t && B64_RE.test(o.b64) && B64_RE.test(o.thumb) && UUID_RE.test(o.id)){
-        await conn.addEv(txRow(t), {id:o.id, y:+o.y, no:+o.no, w:+o.w||0, h:+o.h||0, size:+o.size||0, b64:o.b64, thumb:o.thumb});
-        const f = (t.files||[]).find(x=>x.id===o.id); if (f) delete f.pending;
-      }
-      evOps.shift(); storeEvOps(); storeLocal();
-    }
-    lastErr = null; if (ui.save==='error' || ui.save==='saving') ui.save = pendCount() ? 'dirty' : 'saved';
-  } catch(e){ lastErr = e || {code:'upstream_error'}; ui.save = 'error'; handleAuthErr(e); }
-  evUploading = false; updateSave();
-  if (!ui.sheet) render();
+async function addEvidenceFiles(files){
+  const s = ui.sheet; if (!s) return;
+  if (!api){ toast('ต้องเชื่อมฐานข้อมูลก่อนจึงแนบรูปได้'); return; }
+  for (const f of files){
+    if (f.type && !/^image\//.test(f.type)){ toast('เลือกได้เฉพาะไฟล์รูปภาพ'); continue; }
+    s.evBusy++; renderEvidenceBox();
+    try {
+      const y = +s.d.slice(0,4), no = +(await api.reserve(y));
+      if (!(no > 0)) throw {code:'parse_error'};
+      const meta = {id:uid(), y, no};
+      Object.assign(meta, await stampImage(f, evCode(meta), s.kind, s.d));
+      thumbCache.set(meta.id, 'data:image/jpeg;base64,'+meta.thumb);
+      s.newEv.push(meta); s.ev = true;
+    } catch(e){ toast(e && e.code ? errText(e) : 'อ่านรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น'); }
+    s.evBusy--; if (ui.sheet===s) renderEvidenceBox();
+  }
 }
 async function fetchThumbs(txnId){
-  if (!conn || !UUID_RE.test(txnId)) return;
+  if (!api) return;
   try {
-    const rows = await conn.thumbs(txnId);
-    (Array.isArray(rows) ? rows : []).forEach(r=>{ if (!r || !UUID_RE.test(String(r.id)) || !B64_RE.test(String(r.b||''))) return;
-      thumbCache.set(r.id, 'data:image/jpeg;base64,'+r.b); document.querySelectorAll('[data-evthumb="'+r.id+'"]').forEach(i=>i.src = thumbCache.get(r.id)); });
+    const rows = await api.thumbs(txnId);
+    (Array.isArray(rows) ? rows : []).forEach(r=>{
+      if (!r || !UUID_RE.test(String(r.id)) || !B64_RE.test(String(r.b||''))) return;
+      thumbCache.set(r.id, 'data:image/jpeg;base64,'+r.b);
+      document.querySelectorAll('[data-thumb="'+r.id+'"]').forEach(i=>{ i.src = thumbCache.get(r.id); });
+    });
   } catch(e){}
 }
 function closeViewer(){ const v = document.getElementById('viewer'); if (v) v.remove(); }
 async function openViewer(id){
   closeViewer();
-  const s = ui.sheet, all = [...(s ? s.files : []), ...(s ? s.newEv : [])], meta = all.find(f=>f.id===id) || {};
+  const s = ui.sheet, meta = s ? [...s.files, ...s.newEv].find(f=>f.id===id) || {} : {};
   const v = document.createElement('div'); v.id = 'viewer'; v.className = 'viewer'; v.setAttribute('role','dialog'); v.setAttribute('aria-modal','true');
   v.innerHTML = '<div class="vbar"><span>'+(meta.no ? 'หลักฐานลำดับที่ '+evCode(meta) : 'หลักฐาน')+'</span><button class="x" data-act="closeViewer" aria-label="ปิด">×</button></div><div class="vbody"><div class="vload">กำลังโหลดรูป…</div></div>';
   document.body.appendChild(v);
-  const show = b64 => { const body = v.querySelector('.vbody'); if (!body) return; body.innerHTML = ''; const img = new Image(); img.alt = 'หลักฐาน '+(meta.no?evCode(meta):''); img.src = 'data:image/jpeg;base64,'+b64; body.appendChild(img); };
-  const local = (s && s.newEv.find(f=>f.id===id)) || evOps.find(o=>o.op==='add' && o.id===id);
+  const say = t => { const l = v.querySelector('.vload'); if (l) l.textContent = t; };
+  const show = b64 => { const body = v.querySelector('.vbody'); if (!body) return; const img = new Image(); img.alt = 'หลักฐาน '+(meta.no ? evCode(meta) : ''); img.src = 'data:image/jpeg;base64,'+b64; body.replaceChildren(img); };
+  const local = (s && s.newEv.find(f=>f.id===id)) || evQueue.find(o=>o.op==='add' && o.id===id);
   if (local) return show(local.b64);
-  if (!conn || !UUID_RE.test(id)){ v.querySelector('.vload').textContent = 'ต้องเชื่อมฐานข้อมูลก่อนจึงดูรูปได้'; return; }
-  try {
-    const b = await conn.image(id);
-    if (typeof b === 'string' && B64_RE.test(b)) show(b); else v.querySelector('.vload').textContent = 'ไม่พบรูปนี้ในฐานข้อมูล';
-  } catch(e){ const l = v.querySelector('.vload'); if (l) l.textContent = errText(e); }
+  if (!api) return say('ต้องเชื่อมฐานข้อมูลก่อนจึงดูรูปได้');
+  try { const b = await api.image(id); if (typeof b === 'string' && B64_RE.test(b)) show(b); else say('ไม่พบรูปนี้ในฐานข้อมูล'); }
+  catch(e){ say(errText(e)); }
 }
-async function addEvidenceFiles(fileList){
-  const s = ui.sheet; if (!s) return;
-  if (!conn){ toast('ต้องเชื่อมฐานข้อมูลก่อนจึงแนบรูปได้'); return; }
-  for (const f of [...fileList]){
-    if (f.type && !/^image\//.test(f.type)){ toast('เลือกได้เฉพาะไฟล์รูปภาพ'); continue; }
-    s.evBusy++; renderEvBox();
-    try {
-      const y = +s.d.slice(0,4), no = await reserveEvNo(y), meta = {id:uid(), y, no};
-      Object.assign(meta, await stampImage(f, evCode(meta), s.kind, s.d));
-      thumbCache.set(meta.id, 'data:image/jpeg;base64,'+meta.thumb);
-      s.newEv.push(meta); s.ev = true;
-    } catch(e){ toast(e && e.code ? errText(e) : 'อ่านรูปนี้ไม่ได้ ลองถ่ายใหม่หรือเลือกรูปอื่น'); }
-    s.evBusy--; if (ui.sheet===s) renderEvBox();
-  }
+function evidenceThumb(f, isNew){
+  const src = thumbCache.get(f.id);
+  return '<div class="evth"><button type="button" class="evimg" data-act="viewEvidence" data-arg="'+f.id+'" aria-label="ดูหลักฐาน '+evCode(f)+'"><img alt="" data-thumb="'+f.id+'"'+(src ? ' src="'+src+'"' : '')+'></button>' +
+    '<span class="evno">'+evCode(f)+(isNew ? ' · ใหม่' : f.pending ? ' · รออัปโหลด' : '')+'</span>' +
+    '<button type="button" class="evx" data-act="removeEvidence" data-arg="'+f.id+'" aria-label="เอาหลักฐาน '+evCode(f)+' ออก">×</button></div>';
 }
-function evThumbHtml(f, isNew){
-  const src = thumbCache.get(f.id) || '';
-  return '<div class="evth"><button type="button" class="evimg" data-evview="'+f.id+'" aria-label="ดูหลักฐาน '+evCode(f)+'"><img alt="" data-evthumb="'+f.id+'"'+(src?' src="'+src+'"':'')+'></button>' +
-    '<span class="evno">'+evCode(f)+(isNew?' · ใหม่':f.pending?' · รออัปโหลด':'')+'</span>' +
-    '<button type="button" class="evx" data-evdel="'+f.id+'" aria-label="เอาหลักฐาน '+evCode(f)+' ออก">×</button></div>';
-}
-function evBoxHtml(s){
+function evidenceBox(s){
   const live = s.files.filter(f=>!s.delEv.includes(f.id));
-  return '<div class="evgrid">'+live.map(f=>evThumbHtml(f,false)).join('')+s.newEv.map(f=>evThumbHtml(f,true)).join('') +
-      (s.evBusy ? '<div class="evth busy">กำลังใส่เลขหลักฐาน…</div>' : '') + '</div>' +
-    (conn ? '<div class="evbtns"><button type="button" class="btn" data-act="evCam">📷 ถ่ายรูปใบเสร็จ</button><button type="button" class="btn" data-act="evPick">🖼️ เลือกรูปสลิป</button></div>' +
+  return '<div class="evgrid">'+live.map(f=>evidenceThumb(f,false)).join('')+s.newEv.map(f=>evidenceThumb(f,true)).join('') +
+      (s.evBusy ? '<div class="evth busy">กำลังใส่เลขหลักฐาน…</div>' : '')+'</div>' +
+    (api ? '<div class="evbtns"><button type="button" class="btn" data-act="pickEvidence" data-arg="evCam">📷 ถ่ายรูปใบเสร็จ</button><button type="button" class="btn" data-act="pickEvidence" data-arg="evPick">🖼️ เลือกรูปสลิป</button></div>' +
            '<input type="file" id="evCam" accept="image/*" capture="environment" hidden><input type="file" id="evPick" accept="image/*" multiple hidden>' +
            '<p class="small muted" style="margin:0">รูปจะถูกใส่ลายน้ำ "หลักฐานลำดับที่ ปี-เลขที่" เรียงต่อกันทั้งปี และเก็บไว้ในฐานข้อมูลเมื่อกดบันทึก</p>'
          : '<p class="small muted" style="margin:0">ต้องเชื่อมฐานข้อมูล Supabase ก่อนจึงแนบรูปหลักฐานได้</p>');
 }
-function renderEvBox(){
+function renderEvidenceBox(){
   const s = ui.sheet, box = document.getElementById('evBox'); if (!s || !box) return;
-  box.innerHTML = evBoxHtml(s);
+  box.innerHTML = evidenceBox(s);
   const cb = document.getElementById('shEv'); if (cb) cb.checked = !!s.ev;
 }
 
-/* ---------- helpers ---------- */
-const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const baht = (n,dec) => (Math.round(n*100)/100).toLocaleString('th-TH',{minimumFractionDigits:dec?2:0, maximumFractionDigits:dec?2:0});
-const be = y => +y + 543;
-const sum = (arr, f) => arr.reduce((a,x)=>a+(f?f(x):x),0);
-const txYear = y => state.txns.filter(t=>+t.d.slice(0,4)===+y);
-function dayLabel(d){
-  if (d===TODAY) return 'วันนี้'; if (d===YESTERDAY) return 'เมื่อวาน';
-  const [y,m,dd] = d.split('-').map(Number); const dt = new Date(y,m-1,dd);
-  return 'วัน'+DAYS[dt.getDay()]+' '+dd+' '+MONTHS_FULL[m-1]+' '+be(y);
-}
-function shortDate(d){ if (d===TODAY) return 'วันนี้'; if (d===YESTERDAY) return 'เมื่อวาน'; const [y,m,dd]=d.split('-'); return (+dd)+' '+MONTHS[+m-1]+' '+String(be(y)).slice(2); }
-function toast(msg){ const el = document.createElement('div'); el.className='toast'; el.setAttribute('role','status'); el.textContent=msg; document.body.appendChild(el); setTimeout(()=>el.remove(), 2200); }
-const ICON = {
-  home:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
-  list:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>',
-  tax:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="4" y="2.5" width="16" height="19" rx="2"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/></svg>',
-  backup:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg>',
-  plus:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
-  minus:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>'
-};
-
-/* ---------- tax engine ---------- */
+/* ---------- 8. tax engine (มาตรา 40(8), ภ.ง.ด.90/94) ---------- */
 function progressive(n){
-  let tax=0, prev=0; const steps=[];
-  for (const [cap,r] of BRACKETS){ if (n>prev){ const part=Math.min(n,cap)-prev, t=part*r; steps.push({from:prev,to:cap,r,part,t}); tax+=t; } prev=cap; }
+  let tax = 0, prev = 0; const steps = [];
+  for (const [cap, r] of BRACKETS){ if (n > prev){ const part = Math.min(n,cap)-prev, t = part*r; steps.push({from:prev, to:cap, r, t}); tax += t; } prev = cap; }
   return {tax, steps};
 }
 function calcTax(y, method){
@@ -694,7 +713,7 @@ function calcTax(y, method){
   if (gross >= 120000){ minTax = gross*0.005; if (minTax > 5000 && minTax > prog.tax) usedMin = true; }
   const tax = usedMin ? minTax : prog.tax;
   const credits = (+s.wht||0) + (+s.pnd94||0);
-  return {method, gross, expAll, expEv, bizExp, bizNet, salary, salDed, netIncome, allowTotal, afterAllow, donation, taxable, prog, minTax, usedMin, tax, credits, due: tax-credits};
+  return {method, gross, bizExp, salary, salDed, netIncome, allowTotal, donation, taxable, prog, minTax, usedMin, tax, credits, due:tax-credits};
 }
 function calcHalf(y, method){
   const tx = txYear(y).filter(t=>+t.d.slice(5,7)<=6), s = taxSet(y);
@@ -702,15 +721,67 @@ function calcHalf(y, method){
   const exp = method==='flat' ? gross*0.6 : sum(tx.filter(t=>t.t==='out' && (t.ev || !s.evOnly)), t=>t.amt);
   const net = Math.max(0, gross-exp);
   const allow = 30000 + (s.spouse?30000:0) + (+s.kids||0)*15000;
-  const taxable = Math.max(0, net-allow);
-  let tax = progressive(taxable).tax;
+  let tax = progressive(Math.max(0, net-allow)).tax;
   if (gross >= 60000){ const m = gross*0.005; if (m>5000 && m>tax) tax = m; }
-  return {gross, exp, net, allow, taxable, tax};
+  return {gross, exp, net, allow, tax};
 }
 function bestTax(y){ const a = calcTax(y,'flat'), b = calcTax(y,'actual'); return b.tax < a.tax ? b : a; }
 
-/* ---------- main render ---------- */
+/* ---------- 9. screens ---------- */
 const app = document.getElementById('app');
+const sheetRoot = document.getElementById('sheetRoot');
+const needLogin = () => mode==='web' && !api && !!ui.auth && !ui.skipLogin;
+
+function render(){
+  const body = needLogin() ? loginCard()
+    : (state.sample ? sampleBanner() : '') + ({overview, entries, tax:taxPanel, backup}[ui.tab])() +
+      '<p class="note">ตัวเลขภาษีเป็นการประมาณการ ไม่ใช่คำแนะนำทางภาษีอย่างเป็นทางการ ก่อนยื่นแบบควรตรวจสอบกับกรมสรรพากร (โทร 1161) หรือนักบัญชี</p>';
+  app.innerHTML = header() + '<main><div class="col stack">' + fileBanner() + body + '</div></main>' +
+    (needLogin() ? '' : (ui.tab==='overview' ? '' : '<button class="fab" data-act="open" data-arg="out" aria-label="เพิ่มรายการ">'+ICON.plus+'บันทึก</button>') + bottomNav());
+  updateStatus();
+}
+function header(){
+  return '<header class="top"><div class="col">' +
+    '<div class="logo">'+ICON.logo+'</div>' +
+    '<div class="name"><h1>กล้วยตากคุณย่า</h1><p>บัญชีรายรับ–รายจ่าย</p></div>' +
+    '<label for="yearSel" class="sr">ปีภาษี</label><select id="yearSel" class="yearsel">' +
+    years().map(y=>'<option value="'+y+'"'+(y===+ui.year?' selected':'')+'>ปี '+be(y)+'</option>').join('') + '</select>' +
+    '<div class="savebar" id="saveBar" role="status"></div></div></header>';
+}
+function updateStatus(){
+  const el = document.getElementById('saveBar'); if (!el) return;
+  const busy = sync.status==='saving', err = sync.status==='error';
+  let color = '#b06a00', text;
+  if (err){ color = '#b3401c'; text = errText(sync.err); }
+  else if (busy) text = 'กำลังบันทึกลงฐานข้อมูล…';
+  else if (evUploading) text = 'กำลังอัปโหลดรูปหลักฐาน…';
+  else if (state.sample) text = api ? 'ข้อมูลตัวอย่าง ยังไม่บันทึกลงฐานข้อมูล' : mode==='detecting' ? 'กำลังเชื่อมต่อฐานข้อมูล…' : 'ข้อมูลตัวอย่าง';
+  else if (!api) text = mode==='detecting' || sync.status==='connecting' ? 'กำลังเชื่อมต่อฐานข้อมูล…' : 'ไม่ได้เชื่อมฐานข้อมูล บันทึกไว้ในเครื่องนี้เท่านั้น';
+  else if (pendCount()) text = 'มีรายการรอบันทึกลงฐานข้อมูล…';
+  else if (evQueue.length) text = 'รูปหลักฐานรออัปโหลด '+evQueue.length+' รูป';
+  else { color = '#23834f'; text = 'บันทึกลงฐานข้อมูล Supabase แล้ว'; }
+  el.style.setProperty('--dot', color); el.textContent = text;
+  if (err && api){
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.act = 'sync';
+    b.textContent = sync.err && sync.err.code==='approval_required' ? 'อนุญาตแล้วบันทึก' : 'ลองอีกครั้ง';
+    el.appendChild(b);
+  }
+}
+function fileBanner(){
+  if (!IS_FILE || mode==='claude') return '';
+  return '<div class="banner" role="note"><div><strong>คุณเปิดแอปจากไฟล์ในเครื่อง</strong> แบบนี้เชื่อมฐานข้อมูลไม่ได้ เพราะลิงก์เข้าสู่ระบบในอีเมลจะพาไปที่หน้าเว็บ ไม่ใช่ไฟล์นี้ และรายการที่บันทึกในไฟล์นี้จะเก็บแยกอยู่ในเครื่องเท่านั้น</div>' +
+    '<div class="btns"><a class="btn primary" href="'+CFG.webUrl+'">เปิดหน้าเว็บที่ใช้ได้จริง</a></div>' +
+    '<div class="small muted">แนะนำให้บุ๊กมาร์กหน้าเว็บนี้ไว้แทนไฟล์ ถ้าอีเมลมีรหัสตัวเลข ก็ใส่รหัสในไฟล์นี้เพื่อเข้าสู่ระบบได้</div></div>';
+}
+function sampleBanner(){
+  return '<div class="banner"><div><strong>นี่คือข้อมูลตัวอย่าง</strong> ลองกดดูได้ทุกหน้า พร้อมเมื่อไหร่ก็ล้างแล้วเริ่มบันทึกจริงได้เลย</div>' +
+    '<div class="btns"><button class="btn primary" data-act="clearSample">ล้างตัวอย่าง เริ่มบันทึกจริง</button><button class="btn" data-act="keepSample">เก็บไว้ใช้ต่อ</button></div></div>';
+}
+function bottomNav(){
+  const T = [['overview','หน้าแรก','home'],['entries','รายการ','list'],['tax','ภาษี','tax'],['backup','สำรอง','backup']];
+  return '<nav class="bottom" aria-label="เมนูหลัก"><div class="col">' +
+    T.map(([k,v,i])=>'<a href="#'+k+'"'+(ui.tab===k?' aria-current="page"':'')+'><span class="nicon">'+ICON[i]+'</span>'+v+'</a>').join('') + '</div></nav>';
+}
 function loginCard(){
   const a = ui.auth || {step:'email'};
   const skip = '<button class="link" data-act="skipLogin">ใช้งานแบบไม่ล็อกอิน (เก็บข้อมูลไว้ในเครื่องนี้เท่านั้น)</button>';
@@ -727,83 +798,24 @@ function loginCard(){
     '<label for="loginEmail" class="small muted">อีเมล</label><input id="loginEmail" class="search" type="email" autocomplete="email" inputmode="email" placeholder="name@gmail.com" value="'+esc(a.email||'')+'">' +
     '<button class="btn primary block" data-act="sendLink">ส่งลิงก์เข้าสู่ระบบ</button><p id="loginMsg" class="small" role="alert" style="margin:0;color:var(--exp)"></p>'+skip+'</section>';
 }
-function needLogin(){ return mode==='web' && !conn && !!ui.auth && !ui.skipLogin; }
-const IS_FILE = location.protocol === 'file:';
-function fileBanner(){
-  if (!IS_FILE || mode==='claude') return '';
-  return '<div class="banner" role="note"><div><strong>คุณเปิดแอปจากไฟล์ในเครื่อง</strong> แบบนี้เชื่อมฐานข้อมูลไม่ได้ เพราะลิงก์เข้าสู่ระบบในอีเมลจะพาไปที่หน้าเว็บ ไม่ใช่ไฟล์นี้ และรายการที่บันทึกในไฟล์นี้จะเก็บแยกอยู่ในเครื่องเท่านั้น</div>' +
-    '<div class="btns"><a class="btn primary" href="'+WEB_URL+'">เปิดหน้าเว็บที่ใช้ได้จริง</a></div>' +
-    '<div class="small muted">แนะนำให้บุ๊กมาร์กหน้าเว็บนี้ไว้แทนไฟล์ ถ้าอีเมลมีรหัสตัวเลข ก็ใส่รหัสในไฟล์นี้เพื่อเข้าสู่ระบบได้</div></div>';
-}
-function render(){
-  const ro = ui.save==='readonly';
-  if (needLogin()){ app.innerHTML = header() + '<main><div class="col stack">'+fileBanner()+loginCard()+'</div></main>'; updateSave(); return; }
-  app.innerHTML = header() + '<main><div class="col stack">' + fileBanner() + (state.sample ? sampleBanner() : '') +
-    ({overview, entries, tax:taxPanel, backup}[ui.tab])(ro) + '<p class="note">ตัวเลขภาษีเป็นการประมาณการ ไม่ใช่คำแนะนำทางภาษีอย่างเป็นทางการ ก่อนยื่นแบบควรตรวจสอบกับกรมสรรพากร (โทร 1161) หรือนักบัญชี</p></div></main>' +
-    (ro || ui.tab==='overview' ? '' : '<button class="fab" data-open="out" aria-label="เพิ่มรายการ">'+ICON.plus+'บันทึก</button>') + bottomNav();
-  updateSave();
-}
-function header(){
-  return '<header class="top"><div class="col">' +
-    '<div class="logo"><svg width="32" height="32" viewBox="0 0 46 46" aria-hidden="true"><path d="M8 29c7 7 20 6 26-5 2-4 2-9 1-11-1 6-6 12-13 14-5 1-10 1-14 2z" fill="#c98a12"/><path d="M34 12c1-2 3-3 5-3" stroke="#2e6a3a" stroke-width="3.5" stroke-linecap="round" fill="none"/></svg></div>' +
-    '<div class="name"><h1>กล้วยตากคุณย่า</h1><p>บัญชีรายรับ–รายจ่าย</p></div>' +
-    '<label for="yearSel" class="sr" style="position:absolute;left:-9999px">ปีภาษี</label><select id="yearSel" class="yearsel">' +
-    years().map(y=>'<option value="'+y+'"'+(y===+ui.year?' selected':'')+'>ปี '+be(y)+'</option>').join('') + '</select>' +
-    '<div class="savebar" id="saveBar" role="status"></div></div></header>';
-}
-function updateSave(){
-  const el = document.getElementById('saveBar'); if (!el) return;
-  let M;
-  if (state.sample && ui.save!=='saving' && ui.save!=='error') M = ['#b06a00', conn ? 'ข้อมูลตัวอย่าง ยังไม่บันทึกลงฐานข้อมูล' : capChecked ? 'ข้อมูลตัวอย่าง' : 'กำลังเชื่อมต่อฐานข้อมูล…'];
-  else M = { saved:['#23834f', conn ? 'บันทึกลงฐานข้อมูล Supabase แล้ว' : 'กำลังเชื่อมต่อฐานข้อมูล…'], dirty:['#b06a00','มีรายการรอบันทึกลงฐานข้อมูล…'], saving:['#b06a00','กำลังบันทึกลงฐานข้อมูล…'],
-    local:['#b06a00','ไม่ได้เชื่อมฐานข้อมูล บันทึกไว้ในเครื่องนี้เท่านั้น'], readonly:['#b3401c','ดูได้อย่างเดียว แก้ไขไม่ได้'], error:['#b3401c', errText(lastErr)] }[ui.save];
-  if (ui.save!=='error' && evUploading) M = ['#b06a00', 'กำลังอัปโหลดรูปหลักฐาน…'];
-  else if (ui.save!=='error' && ui.save!=='saving' && conn && evOps.length) M = ['#b06a00', 'รูปหลักฐานรออัปโหลด '+evOps.length+' รูป'];
-  el.style.setProperty('--dot', M[0]); el.textContent = M[1];
-  if (ui.save==='error'){ const b = document.createElement('button'); b.type='button'; b.dataset.act='syncNow'; b.textContent = lastErr && lastErr.code==='approval_required' ? 'อนุญาตแล้วบันทึก' : 'ลองอีกครั้ง'; el.appendChild(b); }
-}
-function errText(e){
-  const c = e && e.code;
-  return ({ needs_reauth:'การเชื่อมต่อ Supabase หมดอายุ เชื่อมใหม่ที่ Settings → Connectors',
-    server_not_connected:'ยังไม่ได้เพิ่ม Supabase ที่ Settings → Connectors (ข้อมูลอยู่ในเครื่องนี้)',
-    selection_required:'มี Supabase หลายบัญชี เลือกบัญชีที่จะใช้ก่อน',
-    not_in_manifest:'ยังไม่ได้อนุญาตให้หน้านี้ใช้ Supabase (ข้อมูลอยู่ในเครื่องนี้)',
-    approval_required:'ต้องกดอนุญาตก่อนบันทึกลงฐานข้อมูล',
-    blocked_by_policy:'องค์กรไม่อนุญาตให้ใช้ Supabase จากหน้านี้',
-    tool_error:'ฐานข้อมูลไม่รับรายการนี้ ข้อมูลยังอยู่ในเครื่อง',
-    parse_error:'อ่านข้อมูลจากฐานข้อมูลไม่ได้',
-    server_unavailable:'ติดต่อฐานข้อมูลไม่ได้ชั่วคราว ข้อมูลยังอยู่ในเครื่อง',
-    not_member:'อีเมลนี้ยังไม่ได้รับสิทธิ์ใช้งาน',
-    not_owner:'ทำรายการนี้ได้เฉพาะเจ้าของร้าน ข้อมูลยังอยู่ในเครื่อง',
-    signed_out:'หมดเวลาเข้าสู่ระบบ เข้าสู่ระบบใหม่อีกครั้ง',
-    bad_email:'รูปแบบอีเมลไม่ถูกต้อง' })[c] || 'บันทึกลงฐานข้อมูลไม่สำเร็จ ข้อมูลยังอยู่ในเครื่อง';
-}
-function sampleBanner(){
-  return '<div class="banner"><div><strong>นี่คือข้อมูลตัวอย่าง</strong> ลองกดดูได้ทุกหน้า พร้อมเมื่อไหร่ก็ล้างแล้วเริ่มบันทึกจริงได้เลย</div>' +
-    '<div class="btns"><button class="btn primary" data-act="clearSample">ล้างตัวอย่าง เริ่มบันทึกจริง</button><button class="btn" data-act="keepSample">เก็บไว้ใช้ต่อ</button></div></div>';
-}
-function bottomNav(){
-  const T = [['overview','หน้าแรก','home'],['entries','รายการ','list'],['tax','ภาษี','tax'],['backup','สำรอง','backup']];
-  return '<nav class="bottom" aria-label="เมนูหลัก"><div class="col">' + T.map(([k,v,i])=>'<a href="#'+k+'"'+(ui.tab===k?' aria-current="page"':'')+'><span class="nicon">'+ICON[i]+'</span>'+v+'</a>').join('') + '</div></nav>';
-}
 
 /* overview */
-function overview(ro){
+function overview(){
   const y = ui.year, tx = txYear(y);
   const inc = sum(tx.filter(t=>t.t==='in'), t=>t.amt), exp = sum(tx.filter(t=>t.t==='out'), t=>t.amt);
-  const ym = TODAY.slice(0,7), thisM = state.txns.filter(t=>t.d.startsWith(ym));
-  const mi = sum(thisM.filter(t=>t.t==='in'),t=>t.amt), mo = sum(thisM.filter(t=>t.t==='out'),t=>t.amt);
+  const thisM = state.txns.filter(t=>t.d.startsWith(TODAY.slice(0,7)));
+  const mi = sum(thisM.filter(t=>t.t==='in'), t=>t.amt), mo = sum(thisM.filter(t=>t.t==='out'), t=>t.amt);
   const noEv = tx.filter(t=>t.t==='out' && !t.ev), best = bestTax(y);
   const vatPct = Math.min(100, inc/1800000*100);
-  const recent = state.txns.slice().sort((a,b)=>b.d.localeCompare(a.d)||(b.id>a.id?1:-1)).slice(0,5);
-  return (ro?'':'<div class="quick"><button class="qbtn in" data-open="in">'+ICON.plus+'รายรับ</button><button class="qbtn out" data-open="out">'+ICON.minus+'รายจ่าย</button></div>') +
+  const recent = state.txns.slice().sort(byNewest).slice(0,5);
+  return '<div class="quick"><button class="qbtn in" data-act="open" data-arg="in">'+ICON.plus+'รายรับ</button><button class="qbtn out" data-act="open" data-arg="out">'+ICON.minus+'รายจ่าย</button></div>' +
     '<section class="hero"><div class="lbl">กำไรปี '+be(y)+'</div><div class="big num">'+baht(inc-exp)+' <span style="font-size:18px" class="muted">บาท</span></div>' +
     '<div class="split"><div class="pill in"><div class="l">รายรับ</div><div class="v num">'+baht(inc)+'</div></div><div class="pill out"><div class="l">รายจ่าย</div><div class="v num">'+baht(exp)+'</div></div></div>' +
-    (+y===now.getFullYear() ? '<p class="small muted" style="margin:12px 0 0">เดือน'+MONTHS_FULL[now.getMonth()]+'นี้ รับ <strong class="num" style="color:var(--inc)">'+baht(mi)+'</strong> จ่าย <strong class="num" style="color:var(--exp)">'+baht(mo)+'</strong></p>' : '') + '</section>' +
+    (+y===NOW.getFullYear() ? '<p class="small muted" style="margin:12px 0 0">เดือน'+MONTHS_FULL[NOW.getMonth()]+'นี้ รับ <strong class="num" style="color:var(--inc)">'+baht(mi)+'</strong> จ่าย <strong class="num" style="color:var(--exp)">'+baht(mo)+'</strong></p>' : '') + '</section>' +
     '<section class="card"><div class="card-head"><h2>รายการล่าสุด</h2><a class="link" href="#entries">ดูทั้งหมด</a></div>' +
       (recent.length ? '<div class="rows" style="margin:0 -16px -16px;border-radius:0 0 18px 18px">'+recent.map(rowHtml).join('')+'</div>' : '<div class="empty">ยังไม่มีรายการ กดปุ่มรายรับหรือรายจ่ายด้านบนเพื่อเริ่ม</div>') + '</section>' +
     '<section class="card watch"><h2>สิ่งที่ควรรู้</h2>' +
-      '<div class="item"><div class="dot">🧮</div><div>ภาษีทั้งปีโดยประมาณ <strong class="num">'+baht(best.tax)+' บาท</strong><div class="small muted">'+(best.tax<1?'ยังไม่ถึงเกณฑ์ต้องเสียภาษี แต่ยังต้องยื่นแบบ ภ.ง.ด.90':'ใช้วิธี'+(best.method==='flat'?'หักเหมา 60%':'หักตามจริง')+' จะเสียน้อยกว่า')+' · <a class="link" href="#tax">ดูรายละเอียด</a></div></div></div>' +
+      '<div class="item"><div class="dot">🧮</div><div>ภาษีทั้งปีโดยประมาณ <strong class="num">'+baht(best.tax)+' บาท</strong><div class="small muted">'+(best.tax<1 ? 'ยังไม่ถึงเกณฑ์ต้องเสียภาษี แต่ยังต้องยื่นแบบ ภ.ง.ด.90' : 'ใช้วิธี'+(best.method==='flat'?'หักเหมา 60%':'หักตามจริง')+' จะเสียน้อยกว่า')+' · <a class="link" href="#tax">ดูรายละเอียด</a></div></div></div>' +
       (noEv.length ? '<div class="item"><div class="dot bad">🧾</div><div>มี <strong>'+noEv.length+' รายจ่าย</strong> ที่ยังไม่มีใบเสร็จ รวม <span class="num">'+baht(sum(noEv,t=>t.amt))+'</span> บาท<div class="small muted">ขอใบเสร็จ หรือทำใบรับเงินให้ผู้รับเงินเซ็นไว้</div></div></div>' : '') +
       '<div class="item"><div class="dot">📈</div><div>รายรับเทียบเกณฑ์จด VAT 1.8 ล้านบาท<div class="progress" style="--c:'+(vatPct>=80?'var(--exp)':'var(--inc)')+'"><div style="width:'+vatPct.toFixed(1)+'%"></div></div><div class="small muted num">'+vatPct.toFixed(0)+'% ของเกณฑ์</div></div></div>' +
       '<div class="item"><div class="dot">📅</div><div>ยื่น ภ.ง.ด.94 (ครึ่งปี) ภายใน 30 ก.ย. '+be(y)+'<br>ยื่น ภ.ง.ด.90 (ทั้งปี) ภายใน 31 มี.ค. '+(be(y)+1)+'</div></div>' +
@@ -816,11 +828,11 @@ function niceMax(v){ if (v<=0) return 1000; const p = Math.pow(10, Math.floor(Ma
 function shortBaht(v){ return v>=1e6 ? (v/1e6).toLocaleString('th-TH',{maximumFractionDigits:1})+' ล.' : v>=1000 ? (v/1000).toLocaleString('th-TH',{maximumFractionDigits:1})+'k' : String(v); }
 function monthlyChart(tx){
   const inc = Array(12).fill(0), exp = Array(12).fill(0);
-  tx.forEach(t=>{ const m=+t.d.slice(5,7)-1; (t.t==='in'?inc:exp)[m]+=t.amt; });
-  const W=520,H=230,L=40,R=4,T=10,B=26, max = niceMax(Math.max(...inc,...exp));
-  const cw=(W-L-R)/12, bw=Math.min(14,cw*0.36), yv = v => T + (H-T-B)*(1-v/max);
-  let g='';
-  for (let i=0;i<=4;i++){ const v=max*i/4, yy=yv(v); g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(L-6)+'" y="'+(yy+4)+'" text-anchor="end" font-size="12" fill="var(--muted)">'+shortBaht(v)+'</text>'; }
+  tx.forEach(t=>{ (t.t==='in' ? inc : exp)[+t.d.slice(5,7)-1] += t.amt; });
+  const W=520, H=230, L=40, R=4, T=10, B=26, max = niceMax(Math.max(...inc, ...exp));
+  const cw = (W-L-R)/12, bw = Math.min(14, cw*0.36), yv = v => T + (H-T-B)*(1-v/max);
+  let g = '';
+  for (let i=0;i<=4;i++){ const v = max*i/4, yy = yv(v); g += '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(L-6)+'" y="'+(yy+4)+'" text-anchor="end" font-size="12" fill="var(--muted)">'+shortBaht(v)+'</text>'; }
   for (let m=0;m<12;m++){
     const cx = L+cw*m+cw/2;
     g += '<rect x="'+(cx-bw-1)+'" y="'+yv(inc[m])+'" width="'+bw+'" height="'+(H-B-yv(inc[m]))+'" rx="3" fill="var(--inc)"><title>'+MONTHS[m]+' รับ '+baht(inc[m])+'</title></rect>';
@@ -830,62 +842,56 @@ function monthlyChart(tx){
   return '<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="กราฟรายรับและรายจ่ายรายเดือน">'+g+'</svg>';
 }
 function catBars(tx, kind, color){
-  const by = {}; tx.filter(t=>t.t===kind).forEach(t=>by[t.c]=(by[t.c]||0)+t.amt);
-  const rows = Object.entries(by).sort((a,b)=>b[1]-a[1]); const total = sum(rows,r=>r[1]);
+  const by = {}; tx.filter(t=>t.t===kind).forEach(t=>{ by[t.c] = (by[t.c]||0) + t.amt; });
+  const rows = Object.entries(by).sort((a,b)=>b[1]-a[1]), total = sum(rows, r=>r[1]);
   if (!rows.length) return '<div class="empty">ยังไม่มีรายการในปีนี้</div>';
-  return '<div class="bars">' + rows.map(([c,v])=>'<div class="bar" style="--c:'+color+'"><span class="e" aria-hidden="true">'+(CAT[c]?CAT[c].e:'•')+'</span><span class="n">'+esc(CAT[c]?CAT[c].n:c)+'</span><span class="num">'+baht(v)+' <span class="muted small">'+Math.round(v/total*100)+'%</span></span><div class="track"><div class="fill" style="width:'+(v/rows[0][1]*100).toFixed(1)+'%"></div></div></div>').join('') + '</div>';
-}
-const fmtQty = q => (+q).toLocaleString('th-TH',{maximumFractionDigits:3});
-function itemsText(items){ return (items||[]).map(i=>i.n+' '+fmtQty(i.q)+(i.u?' '+i.u:'')+' × '+baht(i.p, i.p%1!==0)).join(', '); }
-function itemTable(tx, kind){
-  const by = {};
-  tx.filter(t=>t.t===kind).forEach(t=>(t.items||[]).forEach(i=>{
-    const k = i.n+'\u0000'+i.u, a = by[k] || (by[k] = {n:i.n, u:i.u, q:0, v:0, lo:Infinity, hi:-Infinity, cnt:0});
-    a.q += i.q; a.v += i.q*i.p; a.lo = Math.min(a.lo, i.p); a.hi = Math.max(a.hi, i.p); a.cnt++;
-  }));
-  const rows = Object.values(by).sort((a,b)=>b.v-a.v);
-  if (!rows.length) return '<div class="empty">ยังไม่มีรายการสินค้าในปีนี้<br>ตอนบันทึก ให้ใส่ชื่อสินค้า จำนวน และราคาต่อหน่วย</div>';
-  return '<table class="itbl"><thead><tr><th>'+(kind==='in'?'สินค้า':'ของที่ซื้อ')+'</th><th class="r">จำนวน</th><th class="r">ยอดเงิน</th><th class="r">ราคา/หน่วย</th></tr></thead><tbody>' +
-    rows.slice(0,12).map(a=>'<tr><td class="nm">'+esc(a.n)+'<small>'+a.cnt+' ครั้ง</small></td><td class="r num">'+fmtQty(a.q)+'<small>'+esc(a.u)+'</small></td><td class="r num">'+baht(a.v)+'</td>' +
-      '<td class="r num">'+baht(a.v/a.q, true)+'<small>'+(a.lo===a.hi?'ราคาเดียว':baht(a.lo,a.lo%1!==0)+'–'+baht(a.hi,a.hi%1!==0))+'</small></td></tr>').join('') +
-    '</tbody></table>' + (rows.length>12?'<p class="small muted" style="margin:8px 0 0">แสดง 12 อันดับแรกจาก '+rows.length+' รายการ</p>':'');
+  return '<div class="bars">' + rows.map(([c,v])=>'<div class="bar" style="--c:'+color+'"><span class="e" aria-hidden="true">'+CAT[c].e+'</span><span class="n">'+esc(CAT[c].n)+'</span>' +
+    '<span class="num">'+baht(v)+' <span class="muted small">'+Math.round(v/total*100)+'%</span></span><div class="track"><div class="fill" style="width:'+(v/rows[0][1]*100).toFixed(1)+'%"></div></div></div>').join('') + '</div>';
 }
 function rowHtml(t){
-  const c = CAT[t.c] || {n:t.c, e:'•'};
-  const detail = t.desc || '';
-  return '<button class="row" data-edit="'+t.id+'"><span class="ico '+t.t+'" aria-hidden="true">'+c.e+'</span><span style="min-width:0"><span class="t" style="display:block">'+esc(c.n)+(t.files&&t.files.length?'<span class="clip" title="รูปหลักฐาน">📎'+t.files.length+'</span>':'')+(t.t==='out'&&!t.ev?'<span class="flag">ไม่มีใบเสร็จ</span>':'')+'</span><span class="d" style="display:block">'+shortDate(t.d)+(detail?' · '+esc(detail):'')+'</span></span>' +
+  const c = CAT[t.c];
+  return '<button class="row" data-act="edit" data-arg="'+t.id+'"><span class="ico '+t.t+'" aria-hidden="true">'+c.e+'</span>' +
+    '<span style="min-width:0"><span class="t" style="display:block">'+esc(c.n) +
+      (t.files.length ? '<span class="clip" title="รูปหลักฐาน">📎'+t.files.length+'</span>' : '') +
+      (t.t==='out' && !t.ev ? '<span class="flag">ไม่มีใบเสร็จ</span>' : '') + '</span>' +
+    '<span class="d" style="display:block">'+shortDate(t.d)+(t.desc ? ' · '+esc(t.desc) : '')+'</span></span>' +
     '<span class="a num '+t.t+'">'+(t.t==='in'?'+':'−')+baht(t.amt, t.amt%1!==0)+'</span></button>';
 }
 
-/* entries */
+/* entries: the search box stays put; only #entriesBody re-renders while typing */
 function entries(){
+  const monthsWith = new Set(txYear(ui.year).map(t=>+t.d.slice(5,7)));
+  const chip = (act, v, label, cur) => '<button class="chip" data-act="'+act+'" data-arg="'+v+'" aria-pressed="'+(String(cur)===String(v))+'">'+label+'</button>';
+  return '<div class="chips" role="group" aria-label="เลือกเดือน">' + chip('filterMonth','all','ทั้งปี',ui.fMonth) +
+      MONTHS.map((m,i)=>monthsWith.has(i+1) || +ui.fMonth===i+1 ? chip('filterMonth',i+1,m,ui.fMonth) : '').join('') + '</div>' +
+    '<div class="chips" role="group" aria-label="ประเภท">' + chip('filterType','all','ทั้งหมด',ui.fType) + chip('filterType','in','เฉพาะรายรับ',ui.fType) + chip('filterType','out','เฉพาะรายจ่าย',ui.fType) + '</div>' +
+    '<input type="search" id="fText" class="search" placeholder="ค้นหา เช่น น้ำผึ้ง, ตลาดน้ำ" aria-label="ค้นหารายการ" value="'+esc(ui.fText)+'">' +
+    '<div id="entriesBody" class="stack">'+entriesBody()+'</div>';
+}
+function entriesBody(){
   let list = txYear(ui.year);
   if (ui.fMonth!=='all') list = list.filter(t=>+t.d.slice(5,7)===+ui.fMonth);
   if (ui.fType!=='all') list = list.filter(t=>t.t===ui.fType);
-  if (ui.fText){ const q=ui.fText.toLowerCase(); list = list.filter(t=>(t.desc+' '+(CAT[t.c]?CAT[t.c].n:'')+' '+(t.items||[]).map(i=>i.n).join(' ')).toLowerCase().includes(q)); }
-  list = list.slice().sort((a,b)=>b.d.localeCompare(a.d)||(b.id>a.id?1:-1));
-  const tin = sum(list.filter(t=>t.t==='in'),t=>t.amt), tout = sum(list.filter(t=>t.t==='out'),t=>t.amt);
-  const monthsWith = new Set(txYear(ui.year).map(t=>+t.d.slice(5,7)));
-  const chip = (k,v,label) => '<button class="chip" data-'+k+'="'+v+'" aria-pressed="'+(String(ui[k==='fm'?'fMonth':'fType'])===String(v))+'">'+label+'</button>';
+  const q = ui.fText.trim().toLowerCase();
+  if (q) list = list.filter(t=>(t.desc+' '+CAT[t.c].n).toLowerCase().includes(q));
+  list = list.slice().sort(byNewest);
+  const tin = sum(list.filter(t=>t.t==='in'), t=>t.amt), tout = sum(list.filter(t=>t.t==='out'), t=>t.amt);
   let groups = '', cur = null, buf = '';
-  list.forEach(t=>{ if (t.d!==cur){ if (cur) groups += '<div class="day">'+dayLabel(cur)+'</div><div class="rows">'+buf+'</div>'; cur=t.d; buf=''; } buf += rowHtml(t); });
-  if (cur) groups += '<div class="day">'+dayLabel(cur)+'</div><div class="rows">'+buf+'</div>';
-  return '<div class="chips" role="group" aria-label="เลือกเดือน">' + chip('fm','all','ทั้งปี') + MONTHS.map((m,i)=>monthsWith.has(i+1)||+ui.fMonth===i+1?chip('fm',i+1,m):'').join('') + '</div>' +
-    '<div class="chips" role="group" aria-label="ประเภท">' + chip('ft','all','ทั้งหมด') + chip('ft','in','เฉพาะรายรับ') + chip('ft','out','เฉพาะรายจ่าย') + '</div>' +
-    '<input type="search" id="fText" class="search" placeholder="ค้นหา เช่น น้ำผึ้ง, ตลาดน้ำ" aria-label="ค้นหารายการ" value="'+esc(ui.fText)+'">' +
-    '<div class="hero" style="padding:14px"><div class="split"><div class="pill in"><div class="l">รับ</div><div class="v num">'+baht(tin)+'</div></div><div class="pill out"><div class="l">จ่าย</div><div class="v num">'+baht(tout)+'</div></div></div>' +
+  const close = () => { if (cur) groups += '<div class="day">'+dayLabel(cur)+'</div><div class="rows">'+buf+'</div>'; };
+  list.forEach(t=>{ if (t.d!==cur){ close(); cur = t.d; buf = ''; } buf += rowHtml(t); });
+  close();
+  return '<div class="hero" style="padding:14px"><div class="split"><div class="pill in"><div class="l">รับ</div><div class="v num">'+baht(tin)+'</div></div><div class="pill out"><div class="l">จ่าย</div><div class="v num">'+baht(tout)+'</div></div></div>' +
     '<p class="small muted" style="margin:10px 2px 0">'+list.length+' รายการ · คงเหลือ <strong class="num" style="color:var(--ink)">'+baht(tin-tout)+'</strong> บาท · แตะรายการเพื่อแก้ไข</p></div>' +
     (groups ? '<div>'+groups+'</div>' : '<div class="card empty">ไม่มีรายการ</div>');
 }
 
 /* tax */
-function taxPanel(ro){
+function taxPanel(){
   const s = taxSet(ui.year);
   const num = (k,label,hint) => '<div class="field"><label for="tx_'+k+'">'+label+(hint?'<small>'+hint+'</small>':'')+'</label><input type="text" inputmode="numeric" id="tx_'+k+'" data-tax="'+k+'" value="'+(s[k]?baht(s[k]):'')+'" placeholder="0"></div>';
   const tog = (k,label) => '<label class="toggle" for="tx_'+k+'"><span>'+label+'</span><input type="checkbox" role="switch" id="tx_'+k+'" data-taxbool="'+k+'"'+(s[k]?' checked':'')+'></label>';
-  const dis = ro ? ' inert' : '';
   return '<div id="taxResult" class="stack">'+taxResult()+'</div>' +
-    '<details class="card"'+dis+'><summary>ค่าลดหย่อนของคุณ <span class="small muted num" id="allowSum" style="margin-left:auto">'+baht(calcTax(ui.year,'flat').allowTotal)+' บาท</span></summary>' +
+    '<details class="card"><summary>ค่าลดหย่อนของคุณ <span class="small muted num" id="allowSum" style="margin-left:auto">'+baht(calcTax(ui.year,'flat').allowTotal)+' บาท</span></summary>' +
       '<div class="field"><span>ส่วนตัว<small>ได้ทุกคน</small></span><span class="num r">60,000</span></div>' +
       tog('spouse','มีคู่สมรสที่ไม่มีรายได้ (60,000)') +
       num('kids','จำนวนบุตร (คน)','คนละ 30,000') +
@@ -898,7 +904,7 @@ function taxPanel(ro){
       num('other','ลดหย่อนอื่น ๆ','เช่น กองทุน SSF/RMF หรือมาตรการรัฐประจำปี') +
       num('donation','เงินบริจาค','ไม่เกิน 10% ของเงินได้หลังหักลดหย่อน') +
     '</details>' +
-    '<details class="card"'+dis+'><summary>รายได้อื่น และภาษีที่จ่ายแล้ว</summary>' +
+    '<details class="card"><summary>รายได้อื่น และภาษีที่จ่ายแล้ว</summary>' +
       num('salary','เงินเดือน / ค่าจ้าง ทั้งปี','หักค่าใช้จ่าย 50% ไม่เกิน 100,000') +
       num('wht','ภาษีที่ถูกหัก ณ ที่จ่าย','ดูจากใบ 50 ทวิ') +
       num('pnd94','ภาษีที่จ่ายตอนยื่น ภ.ง.ด.94','') +
@@ -918,76 +924,84 @@ function taxResult(){
   const m = (r,title) => { const on = best===r.method && diff>=1;
     return '<div class="m'+(on?' best':'')+'"><div class="small muted">'+title+'</div><div class="v num">'+baht(r.tax)+'</div><div class="small muted num">หักค่าใช้จ่าย '+baht(r.bizExp)+'</div>'+(on?'<span class="badge">ประหยัดกว่า</span>':'')+'</div>'; };
   const steps = B.prog.steps.map(s=>'<tr><td class="num">'+(s.to===Infinity?'เกิน '+baht(s.from):baht(s.from)+'–'+baht(s.to))+'</td><td class="r">'+(s.r*100)+'%</td><td class="r num">'+baht(s.t)+'</td></tr>').join('');
-  const dueLbl = B.due >= 0 ? 'ต้องจ่ายเพิ่มตอนยื่น ภ.ง.ด.90' : 'ได้เงินภาษีคืน';
   return '<section class="taxhero"><div style="opacity:.8">ภาษีปี '+be(y)+' โดยประมาณ</div><div class="big num">'+baht(B.tax)+' บาท</div>' +
-    (B.credits ? '<div class="num">'+dueLbl+' '+baht(Math.abs(B.due))+' บาท</div>' : '') +
+    (B.credits ? '<div class="num">'+(B.due >= 0 ? 'ต้องจ่ายเพิ่มตอนยื่น ภ.ง.ด.90' : 'ได้เงินภาษีคืน')+' '+baht(Math.abs(B.due))+' บาท</div>' : '') +
     '<div class="tip">'+(diff<1 ? 'หักแบบไหนก็เสียภาษีเท่ากัน' : '👉 แนะนำ<strong>'+(best==='flat'?'หักเหมา 60%':'หักตามจริง')+'</strong> ประหยัดกว่า <strong class="num">'+baht(diff)+'</strong> บาท') +
-    '<br><span style="opacity:.8">รายจ่ายจริงของคุณเท่ากับ '+(a.gross?Math.round(b.bizExp/a.gross*100):0)+'% ของรายรับ ถ้าเกิน 60% หักตามจริงจะคุ้มกว่า</span></div></section>' +
+    '<br><span style="opacity:.8">รายจ่ายจริงของคุณเท่ากับ '+(a.gross ? Math.round(b.bizExp/a.gross*100) : 0)+'% ของรายรับ ถ้าเกิน 60% หักตามจริงจะคุ้มกว่า</span></div></section>' +
     '<section class="card"><h2 style="margin-bottom:10px">เทียบ 2 วิธี</h2><div class="compare">'+m(a,'หักเหมา 60%')+m(b,'หักตามจริง')+'</div></section>' +
     '<section class="card"><h2 style="margin-bottom:10px">คิดภาษีอย่างไร</h2><div class="kv num">' +
       '<span>รายรับขายกล้วยตาก</span><span>'+baht(B.gross)+'</span>' +
       '<span>หักค่าใช้จ่าย ('+(best==='flat'?'เหมา':'ตามจริง')+')</span><span>−'+baht(B.bizExp)+'</span>' +
-      (B.salary?'<span>เงินเดือนหลังหักค่าใช้จ่าย</span><span>+'+baht(B.salary-B.salDed)+'</span>':'') +
-      '<span>หักค่าลดหย่อน</span><span>−'+baht(Math.min(B.allowTotal,B.netIncome))+'</span>' +
-      (B.donation?'<span>หักเงินบริจาค</span><span>−'+baht(B.donation)+'</span>':'') +
+      (B.salary ? '<span>เงินเดือนหลังหักค่าใช้จ่าย</span><span>+'+baht(B.salary-B.salDed)+'</span>' : '') +
+      '<span>หักค่าลดหย่อน</span><span>−'+baht(Math.min(B.allowTotal, B.netIncome))+'</span>' +
+      (B.donation ? '<span>หักเงินบริจาค</span><span>−'+baht(B.donation)+'</span>' : '') +
       '<span class="tot">เงินได้สุทธิ</span><span class="tot">'+baht(B.taxable)+'</span></div>' +
-      (steps?'<table style="margin-top:12px"><thead><tr><th>ช่วงเงินได้สุทธิ</th><th class="r">อัตรา</th><th class="r">ภาษี</th></tr></thead><tbody>'+steps+'</tbody></table>':'') +
-      (B.gross>=120000?'<p class="small muted" style="margin:10px 0 0">เทียบวิธีที่ 2 (0.5% ของรายรับ) ได้ '+baht(B.minTax)+' บาท '+(B.usedMin?'ซึ่งสูงกว่า จึงต้องใช้ยอดนี้':B.minTax<=5000?'ไม่เกิน 5,000 จึงได้รับยกเว้น':'ต่ำกว่าวิธีขั้นบันได')+'</p>':'') +
+      (steps ? '<table style="margin-top:12px"><thead><tr><th>ช่วงเงินได้สุทธิ</th><th class="r">อัตรา</th><th class="r">ภาษี</th></tr></thead><tbody>'+steps+'</tbody></table>' : '') +
+      (B.gross>=120000 ? '<p class="small muted" style="margin:10px 0 0">เทียบวิธีที่ 2 (0.5% ของรายรับ) ได้ '+baht(B.minTax)+' บาท '+(B.usedMin ? 'ซึ่งสูงกว่า จึงต้องใช้ยอดนี้' : B.minTax<=5000 ? 'ไม่เกิน 5,000 จึงได้รับยกเว้น' : 'ต่ำกว่าวิธีขั้นบันได')+'</p>' : '') +
     '</section>' +
     '<section class="card"><div class="card-head"><h2>ภ.ง.ด.94 ครึ่งปี</h2><span class="small muted">ม.ค.–มิ.ย.</span></div><div class="kv num">' +
-      '<span>รายรับครึ่งปี</span><span>'+baht(h.gross)+'</span><span>หักค่าใช้จ่าย</span><span>−'+baht(h.exp)+'</span><span>ลดหย่อนครึ่งปี</span><span>−'+baht(Math.min(h.allow,h.net))+'</span>' +
+      '<span>รายรับครึ่งปี</span><span>'+baht(h.gross)+'</span><span>หักค่าใช้จ่าย</span><span>−'+baht(h.exp)+'</span><span>ลดหย่อนครึ่งปี</span><span>−'+baht(Math.min(h.allow, h.net))+'</span>' +
       '<span class="tot">ภาษีครึ่งปีโดยประมาณ</span><span class="tot">'+baht(h.tax)+'</span></div>' +
       '<p class="small muted" style="margin:10px 0 0">ภาษีที่จ่ายตอน ภ.ง.ด.94 นำไปหักตอนยื่น ภ.ง.ด.90 ได้</p></section>';
 }
+function refreshTax(){
+  const r = document.getElementById('taxResult'); if (r) r.innerHTML = taxResult();
+  const a = document.getElementById('allowSum'); if (a) a.textContent = baht(calcTax(ui.year,'flat').allowTotal)+' บาท';
+}
 
 /* backup */
-function backup(ro){
-  const st = state.sample ? 'ข้อมูลตัวอย่าง (ยังไม่บันทึก)' : !conn ? (capChecked ? 'ไม่ได้เชื่อม (เก็บในเครื่องนี้)' : 'กำลังเชื่อมต่อ…') : ui.save==='error' ? 'มีปัญหา' : pendCount() ? 'รอบันทึก '+pendCount()+' รายการ' : 'เชื่อมแล้ว';
-  const when = lastSync ? new Date(lastSync).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.' : '–';
+function backup(){
+  const st = state.sample ? 'ข้อมูลตัวอย่าง (ยังไม่บันทึก)' : !api ? (mode==='detecting' ? 'กำลังเชื่อมต่อ…' : 'ไม่ได้เชื่อม (เก็บในเครื่องนี้)')
+    : sync.status==='error' ? 'มีปัญหา' : pendCount() ? 'รอบันทึก '+pendCount()+' รายการ' : 'เชื่อมแล้ว';
+  const when = sync.lastSync ? new Date(sync.lastSync).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' น.' : '–';
+  const via = mode==='claude' ? 'Claude (Supabase connector)' : mode==='web' ? (api && me ? esc(me.email||'')+(me.role==='owner' ? ' · เจ้าของ' : ' · ผู้ใช้') : 'เว็บ (ยังไม่ได้เข้าสู่ระบบ)') : '–';
   return '<section class="card stack"><h2>ฐานข้อมูล Supabase</h2>' +
-    '<div class="dbstat"><span class="muted">สถานะ</span><span>'+esc(st)+'</span><span class="muted">รายการทั้งหมด</span><span class="num">'+state.txns.length+'</span><span class="muted">ซิงก์ล่าสุด</span><span class="num">'+when+'</span>' +
-    '<span class="muted">เชื่อมผ่าน</span><span>'+(mode==='claude' ? 'Claude (Supabase connector)' : mode==='web' ? (conn && me ? esc(me.email||'')+(me.role==='owner'?' · เจ้าของ':' · ผู้ใช้'):'เว็บ (ยังไม่ได้เข้าสู่ระบบ)') : '–')+'</span></div>' +
-    (conn ? '<button class="btn block" data-act="syncNow">ดึงข้อมูลล่าสุด / บันทึกตอนนี้</button>' : '') +
-    (mode==='web' && conn ? '<button class="btn block" data-act="logout">ออกจากระบบ</button>' : '') +
-    (mode==='web' && !conn ? '<button class="btn primary block" data-act="showLogin">เข้าสู่ระบบเพื่อใช้ฐานข้อมูล</button>' : '') +
+    '<div class="dbstat"><span class="muted">สถานะ</span><span>'+esc(st)+'</span><span class="muted">รายการทั้งหมด</span><span class="num">'+state.txns.length+'</span>' +
+      '<span class="muted">ซิงก์ล่าสุด</span><span class="num">'+when+'</span><span class="muted">เชื่อมผ่าน</span><span>'+via+'</span></div>' +
+    (api ? '<button class="btn block" data-act="sync">ดึงข้อมูลล่าสุด / บันทึกตอนนี้</button>' : '') +
+    (mode==='web' && api ? '<button class="btn block" data-act="logout">ออกจากระบบ</button>' : '') +
+    (mode==='web' && !api ? '<button class="btn primary block" data-act="showLogin">เข้าสู่ระบบเพื่อใช้ฐานข้อมูล</button>' : '') +
     '<p class="small muted" style="margin:0">ข้อมูลเก็บในโปรเจกต์ kluaytak-khunya เปิดได้ทั้งใน Claude และเป็นเว็บทั่วไป (เข้าสู่ระบบด้วยอีเมล) ถ้าเชื่อมไม่ได้ รายการจะเก็บในเครื่องก่อน แล้วส่งขึ้นเมื่อเชื่อมได้</p></section>' +
-    (conn && me && me.role==='owner' ? membersCard() : '') +
+    (api && me && me.role==='owner' ? membersCard() : '') +
     '<section class="card stack"><h2>ส่งให้นักบัญชี</h2><p class="small muted" style="margin:0">กดคัดลอก แล้วไปวางใน Excel, Google Sheets หรือ LINE</p>' +
-    '<button class="btn primary block" data-act="copyCsv">คัดลอกรายการปี '+be(ui.year)+'</button><button class="btn block" data-act="copyCsvAll">คัดลอกรายการทุกปี</button>' +
-    '<textarea id="outBox" readonly aria-label="ข้อมูลที่คัดลอก" placeholder="ข้อความที่คัดลอกจะแสดงตรงนี้ด้วย ถ้าคัดลอกอัตโนมัติไม่ได้ ให้กดค้างแล้วคัดลอกเอง"></textarea></section>' +
-    '<section class="card stack"><h2>สำรองข้อมูล</h2><p class="small muted" style="margin:0">คัดลอกข้อมูลทั้งหมดเก็บไว้ (เช่น ส่งเข้า LINE ตัวเอง) แล้ววางกลับมาเพื่อกู้คืนได้</p>' +
-    '<button class="btn block" data-act="copyJson">คัดลอกข้อมูลสำรอง</button>' +
-    (ro?'':'<label for="inBox" class="small muted">วางข้อมูลสำรองเพื่อกู้คืน (จะแทนที่ข้อมูลปัจจุบันทั้งหมด)</label><textarea id="inBox"></textarea><button class="btn block" data-act="importJson">กู้คืนข้อมูล</button>') + '</section>' +
-    (ro?'':'<section class="card stack"><h2>ลบข้อมูล</h2>' + (ui.confirmWipe ? '<p class="small" style="margin:0;color:var(--exp)">ลบทุกรายการแล้วจะกู้คืนไม่ได้ ถ้าไม่ได้สำรองไว้</p><label for="wipePin" class="small muted">ใส่ PIN เพื่อยืนยันการลบ</label><input type="password" id="wipePin" class="search" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="PIN"><p id="wipeMsg" class="small" role="alert" style="margin:0;color:var(--exp)"></p><button class="btn danger block" data-act="wipeYes">ยืนยัน ลบทุกรายการ</button><button class="btn block" data-act="wipeNo">ไม่ลบ</button>' : '<button class="btn danger block" data-act="wipe">ลบข้อมูลทั้งหมด</button>') + '</section>');
+      '<button class="btn primary block" data-act="copyCsv" data-arg="year">คัดลอกรายการปี '+be(ui.year)+'</button><button class="btn block" data-act="copyCsv" data-arg="all">คัดลอกรายการทุกปี</button>' +
+      '<textarea id="outBox" readonly aria-label="ข้อมูลที่คัดลอก" placeholder="ข้อความที่คัดลอกจะแสดงตรงนี้ด้วย ถ้าคัดลอกอัตโนมัติไม่ได้ ให้กดค้างแล้วคัดลอกเอง"></textarea></section>' +
+    '<section class="card stack"><h2>สำรองข้อมูล</h2><p class="small muted" style="margin:0">คัดลอกข้อมูลทั้งหมดเก็บไว้ (เช่น ส่งเข้า LINE ตัวเอง) แล้ววางกลับมาเพื่อกู้คืนได้ ไม่รวมรูปหลักฐาน</p>' +
+      '<button class="btn block" data-act="copyJson">คัดลอกข้อมูลสำรอง</button>' +
+      (canReplaceAll() ? '<label for="inBox" class="small muted">วางข้อมูลสำรองเพื่อกู้คืน (จะแทนที่ข้อมูลปัจจุบันทั้งหมด)</label><textarea id="inBox"></textarea><button class="btn block" data-act="importJson">กู้คืนข้อมูล</button>'
+        : '<p class="small muted" style="margin:0">การกู้คืนและการลบข้อมูลทั้งหมดทำได้เฉพาะเจ้าของร้าน</p>') + '</section>' +
+    (!canReplaceAll() ? '' : '<section class="card stack"><h2>ลบข้อมูล</h2>' + (ui.confirmWipe
+      ? '<p class="small" style="margin:0;color:var(--exp)">ลบทุกรายการและรูปหลักฐานทั้งหมด แล้วจะกู้คืนไม่ได้ ถ้าไม่ได้สำรองไว้</p>' +
+        '<label for="wipePin" class="small muted">ใส่ PIN เพื่อยืนยันการลบ</label><input type="password" id="wipePin" class="search" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="PIN">' +
+        '<p id="wipeMsg" class="small" role="alert" style="margin:0;color:var(--exp)"></p>' +
+        '<button class="btn danger block" data-act="wipeYes">ยืนยัน ลบทุกรายการ</button><button class="btn block" data-act="wipeNo">ไม่ลบ</button>'
+      : '<button class="btn danger block" data-act="wipe">ลบข้อมูลทั้งหมด</button>') + '</section>');
 }
+// replacing or wiping everything is owner-only in the database; members don't get the buttons
+const canReplaceAll = () => mode!=='web' || !api || !!(me && me.role==='owner');
 function membersCard(){
   if (ui.members === null && !ui.membersLoading) loadMembers();
-  const list = ui.members || [];
   return '<section class="card stack"><h2>ผู้ใช้งาน</h2><p class="small muted" style="margin:0">อีเมลที่อยู่ในรายชื่อนี้เข้าสู่ระบบและบันทึกรายการได้ ส่วนการจัดการผู้ใช้และการลบข้อมูลทั้งหมดทำได้เฉพาะเจ้าของ</p>' +
-    (ui.members === null ? '<p class="small muted" style="margin:0">กำลังโหลด…</p>' :
-      '<div class="dbstat">' + list.map(m=>'<span>'+esc(m.email)+'<br><small class="muted">'+(m.role==='owner'?'เจ้าของ':'ผู้ใช้')+'</small></span>' +
-        (m.role==='owner' ? '<span></span>' : '<button class="link" data-memdel="'+esc(m.email)+'" style="color:var(--exp)">เอาออก</button>')).join('') + '</div>') +
+    (ui.members === null ? '<p class="small muted" style="margin:0">กำลังโหลด…</p>'
+      : '<div class="dbstat">' + ui.members.map(m=>'<span>'+esc(m.email)+'<br><small class="muted">'+(m.role==='owner' ? 'เจ้าของ' : 'ผู้ใช้')+'</small></span>' +
+          (m.role==='owner' ? '<span></span>' : '<button class="link" data-act="memberRemove" data-arg="'+esc(m.email)+'" style="color:var(--exp)">เอาออก</button>')).join('') + '</div>') +
     '<label for="memEmail" class="small muted">เพิ่มอีเมลผู้ใช้</label><input id="memEmail" class="search" type="email" inputmode="email" autocomplete="off" placeholder="family@gmail.com">' +
-    '<button class="btn block" data-act="memAdd">เพิ่มผู้ใช้</button>' +
-    '<p id="memMsg" class="small" role="status" style="margin:0;color:var(--exp)">'+esc(ui.membersErr||'')+'</p>' +
-    (WEB_URL ? '<p class="small muted" style="margin:0">ส่งลิงก์นี้ให้ผู้ใช้: <a href="'+WEB_URL+'">'+WEB_URL+'</a></p>' : '') + '</section>';
+    '<button class="btn block" data-act="memberAdd">เพิ่มผู้ใช้</button>' +
+    '<p class="small" role="status" style="margin:0;color:var(--exp)">'+esc(ui.membersErr)+'</p>' +
+    '<p class="small muted" style="margin:0">ส่งลิงก์นี้ให้ผู้ใช้: <a href="'+CFG.webUrl+'">'+CFG.webUrl+'</a></p></section>';
 }
 async function loadMembers(){
   ui.membersLoading = true;
-  try { const r = await conn.members(); ui.members = Array.isArray(r) ? r : []; ui.membersErr = ''; }
+  try { const r = await api.members(); ui.members = Array.isArray(r) ? r : []; ui.membersErr = ''; }
   catch(e){ ui.members = []; ui.membersErr = errText(e); }
   ui.membersLoading = false;
   if (ui.tab==='backup' && !ui.sheet) render();
 }
 function toCsv(list){
   const q = v => '"'+String(v).replace(/"/g,'""')+'"';
-  return [['วันที่','ประเภท','หมวด','รายละเอียด','รายรับ','รายจ่าย','มีหลักฐาน'].map(q).join(',')].concat(list.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(t=>[t.d, t.t==='in'?'รายรับ':'รายจ่าย', CAT[t.c]?CAT[t.c].n:t.c, t.desc, t.t==='in'?t.amt:'', t.t==='out'?t.amt:'', t.ev?'มี':'ไม่มี'].map(q).join(','))).join('\n');
-}
-function toItemsCsv(list){
-  const q = v => '"'+String(v).replace(/"/g,'""')+'"';
-  const out = [['วันที่','ประเภท','หมวด','สินค้า','จำนวน','หน่วย','ราคาต่อหน่วย','รวม','รายละเอียด'].map(q).join(',')];
-  list.slice().sort((a,b)=>a.d.localeCompare(b.d)).forEach(t=>(t.items||[]).forEach(i=>out.push([t.d, t.t==='in'?'รายรับ':'รายจ่าย', CAT[t.c]?CAT[t.c].n:t.c, i.n, i.q, i.u, i.p, Math.round(i.q*i.p*100)/100, t.desc].map(q).join(','))));
-  return out.join('\n');
+  return [['วันที่','ประเภท','หมวด','รายละเอียด','รายรับ','รายจ่าย','มีหลักฐาน','เลขหลักฐาน'].map(q).join(',')]
+    .concat(list.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(t=>[t.d, t.t==='in'?'รายรับ':'รายจ่าย', CAT[t.c].n, t.desc,
+      t.t==='in'?t.amt:'', t.t==='out'?t.amt:'', t.ev?'มี':'ไม่มี', t.files.map(evCode).join(' ')].map(q).join(','))).join('\n');
 }
 async function copyOut(text, label){
   const box = document.getElementById('outBox'); if (box) box.value = text;
@@ -995,224 +1009,227 @@ async function copyOut(text, label){
   catch(e){ if (box){ box.focus(); box.select(); } toast('คัดลอกอัตโนมัติไม่ได้ กดค้างที่กล่องข้อความแล้วคัดลอกเอง'); }
 }
 
-/* ---------- entry sheet ---------- */
-const sheetRoot = document.getElementById('sheetRoot');
+/* ---------- 10. entry sheet (add / edit) ---------- */
 function openSheet(kind, editId){
-  if (ui.save==='readonly') return;
-  if (editId){ const t = state.txns.find(x=>x.id===editId); if (!t) return;
-    const items = (t.items||[]).map(i=>({n:i.n, q:String(i.q), u:i.u, p:String(i.p)}));
-    ui.sheet = {kind:t.t, editId, amt:String(t.amt), c:t.c, d:t.d, desc:t.desc||'', ev:!!t.ev, confirmDel:false, items: items.length ? items : [blankItem()], files:cleanFiles(t.files), newEv:[], delEv:[], evBusy:0};
+  if (editId){
+    const t = state.txns.find(x=>x.id===editId); if (!t) return;
+    ui.sheet = {kind:t.t, editId, amt:String(t.amt), c:t.c, d:t.d, desc:t.desc, ev:t.ev, confirmDel:false, files:t.files.slice(), newEv:[], delEv:[], evBusy:0};
   } else {
-    const d = +ui.year===now.getFullYear() ? TODAY : ui.year+'-12-31';
-    ui.sheet = {kind, editId:null, amt:'', c:CATS[kind][0][0], d, desc:'', ev:true, confirmDel:false, items:[blankItem()], files:[], newEv:[], delEv:[], evBusy:0};
+    const d = +ui.year===NOW.getFullYear() ? TODAY : ui.year+'-12-31';
+    ui.sheet = {kind, editId:null, amt:'', c:CATS[kind][0][0], d, desc:'', ev:true, confirmDel:false, files:[], newEv:[], delEv:[], evBusy:0};
   }
   document.body.classList.add('lock'); renderSheet(true);
   if (editId && ui.sheet.files.some(f=>!thumbCache.has(f.id))) fetchThumbs(editId);
 }
-const blankItem = () => ({n:'', q:'', u:'', p:''});
-const numOf = v => { const n = parseFloat(String(v==null?'':v).replace(/,/g,'')); return isFinite(n) ? n : 0; };
-const DEFAULT_ITEMS = {
-  in: [['กล้วยตากถุงเล็ก','ถุง'],['กล้วยตากถุงใหญ่','ถุง'],['กล้วยตากน้ำผึ้ง','ถุง'],['กล้วยตากกล่องของฝาก','กล่อง'],['กล้วยตากแบบแผ่น','กก.']],
-  out: [['กล้วยน้ำว้า','หวี'],['น้ำผึ้ง','ขวด'],['ถุงซิปล็อก','แพ็ก'],['สติกเกอร์ฉลาก','ม้วน'],['กล่องของฝาก','ใบ'],['แก๊สหุงต้ม','ถัง'],['ค่าไฟ','เดือน'],['คนช่วยปอก-ตาก','แรง'],['ค่าส่งพัสดุ','กล่อง']]
-};
-function itemMemory(kind){
-  const m = new Map(); DEFAULT_ITEMS[kind].forEach(([n,u])=>m.set(n,{u, p:null}));
-  state.txns.filter(t=>t.t===kind).slice().sort((a,b)=>a.d.localeCompare(b.d)).forEach(t=>(t.items||[]).forEach(i=>m.set(i.n,{u:i.u, p:i.p})));
-  return m;
+function closeSheet(){
+  ui.sheet = null; sheetRoot.innerHTML = ''; document.body.classList.remove('lock');
+  if (pendCount()) scheduleFlush();
 }
-function sheetItemsActive(s){ return s.items.some(i=>String(i.n).trim() || numOf(i.q) || numOf(i.p)); }
-function sheetItemsTotal(s){ return Math.round(s.items.reduce((a,i)=>a + Math.round(numOf(i.q)*numOf(i.p)*100)/100, 0)*100)/100; }
-function itemRowHtml(i, idx, k){
-  const lt = Math.round(numOf(i.q)*numOf(i.p)*100)/100;
-  return '<div class="item"><div class="r1"><input type="text" list="itemNames" data-item="'+idx+'" data-f="n" maxlength="100" autocomplete="off" aria-label="ชื่อสินค้า รายการที่ '+(idx+1)+'" placeholder="'+(k==='in'?'ขายอะไร เช่น กล้วยตากถุงเล็ก':'ซื้ออะไร เช่น กล้วยน้ำว้า')+'" value="'+esc(i.n)+'">' +
-    '<button type="button" class="ix" data-delitem="'+idx+'" aria-label="ลบสินค้ารายการที่ '+(idx+1)+'">×</button></div>' +
-    '<div class="nums"><label>จำนวน<input type="text" inputmode="decimal" data-item="'+idx+'" data-f="q" placeholder="0" value="'+esc(i.q)+'"></label>' +
-    '<label>หน่วย<input type="text" data-item="'+idx+'" data-f="u" maxlength="20" placeholder="ถุง" value="'+esc(i.u)+'"></label>' +
-    '<label>ราคา/หน่วย (บาท)<input type="text" inputmode="decimal" data-item="'+idx+'" data-f="p" placeholder="0" value="'+esc(i.p)+'"></label></div>' +
-    '<div class="lt"><span>รวม</span><strong class="num" id="lt'+idx+'">'+baht(lt, lt%1!==0)+' บาท</strong></div></div>';
-}
-function refreshTotals(){
-  const s = ui.sheet; if (!s) return;
-  s.items.forEach((i,idx)=>{ const el = document.getElementById('lt'+idx); if (el){ const v = Math.round(numOf(i.q)*numOf(i.p)*100)/100; el.textContent = baht(v, v%1!==0)+' บาท'; } });
-  const on = sheetItemsActive(s), amt = document.getElementById('shAmt'), plus = document.getElementById('plusRow'), note = document.getElementById('autoNote');
-  if (on){ const t = sheetItemsTotal(s); s.amt = String(t); if (amt){ amt.readOnly = true; amt.value = t ? fmtAmt(String(t)) : ''; } }
-  else if (amt && amt.readOnly){ amt.readOnly = false; amt.value = ''; s.amt = ''; }
-  if (plus) plus.hidden = on; if (note) note.hidden = !on;
-}
-function closeSheet(){ ui.sheet = null; sheetRoot.innerHTML=''; document.body.classList.remove('lock'); if (ui.save==='dirty') scheduleSave(); }
-function renderSheet(focusAmt){
-  const s = ui.sheet; if (!s){ sheetRoot.innerHTML=''; return; }
+function renderSheet(focus){
+  const s = ui.sheet; if (!s){ sheetRoot.innerHTML = ''; return; }
   const k = s.kind;
   sheetRoot.innerHTML = '<div class="backdrop" data-act="closeSheet"></div><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shTitle"><div class="grab"></div><div class="col">' +
-    '<div class="hd"><h2 id="shTitle">'+(s.editId?'แก้ไขรายการ':'บันทึก'+(k==='in'?'รายรับ':'รายจ่าย'))+'</h2><button class="x" data-act="closeSheet" aria-label="ปิด">×</button></div>' +
-    '<div class="kind" role="group" aria-label="ประเภท"><button class="in" data-skind="in" aria-pressed="'+(k==='in')+'">รายรับ (ได้เงิน)</button><button class="out" data-skind="out" aria-pressed="'+(k==='out')+'">รายจ่าย (จ่ายเงิน)</button></div>' +
-    '<div class="sec-l">'+(k==='in'?'ขายทางไหน':'จ่ายค่าอะไร')+'</div>' +
-    '<div class="cats" role="group" aria-label="หมวด">'+CATS[k].map(([key,n,e])=>'<button type="button" class="cat" data-cat="'+key+'" aria-pressed="'+(s.c===key)+'"><span class="e" aria-hidden="true">'+e+'</span>'+n+'</button>').join('')+'</div>' +
-    '<div class="amtbox"><label for="shAmt">จำนวนเงิน</label><div class="amtline"><input id="shAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="'+esc(s.amt?fmtAmt(s.amt):'')+'"><span>บาท</span></div>' +
-    '<div class="plus">'+[100,500,1000,5000].map(v=>'<button type="button" data-plus="'+v+'">+'+baht(v)+'</button>').join('')+'<button type="button" data-plus="0">ล้าง</button></div></div>' +
-    '<div class="sec-l">วันที่</div><div class="dates"><button type="button" class="chip" data-day="'+TODAY+'" aria-pressed="'+(s.d===TODAY)+'">วันนี้</button><button type="button" class="chip" data-day="'+YESTERDAY+'" aria-pressed="'+(s.d===YESTERDAY)+'">เมื่อวาน</button>' +
+    '<div class="hd"><h2 id="shTitle">'+(s.editId ? 'แก้ไขรายการ' : 'บันทึก'+(k==='in'?'รายรับ':'รายจ่าย'))+'</h2><button class="x" data-act="closeSheet" aria-label="ปิด">×</button></div>' +
+    '<div class="kind" role="group" aria-label="ประเภท"><button class="in" data-act="sheetKind" data-arg="in" aria-pressed="'+(k==='in')+'">รายรับ (ได้เงิน)</button><button class="out" data-act="sheetKind" data-arg="out" aria-pressed="'+(k==='out')+'">รายจ่าย (จ่ายเงิน)</button></div>' +
+    '<div class="amtbox"><label for="shAmt">จำนวนเงิน</label><div class="amtline"><input id="shAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="'+esc(s.amt ? fmtAmt(s.amt) : '')+'"><span>บาท</span></div>' +
+      '<div class="plus">'+[100,500,1000,5000].map(v=>'<button type="button" data-act="plus" data-arg="'+v+'">+'+baht(v)+'</button>').join('')+'<button type="button" data-act="plus" data-arg="0">ล้าง</button></div></div>' +
+    '<div class="sec-l">'+(k==='in' ? 'ขายทางไหน' : 'จ่ายค่าอะไร')+'</div>' +
+    '<div class="cats" role="group" aria-label="หมวด">'+CATS[k].map(([key,n,e])=>'<button type="button" class="cat" data-act="sheetCat" data-arg="'+key+'" aria-pressed="'+(s.c===key)+'"><span class="e" aria-hidden="true">'+e+'</span>'+n+'</button>').join('')+'</div>' +
+    '<div class="sec-l">วันที่</div><div class="dates"><button type="button" class="chip" data-act="sheetDay" data-arg="'+TODAY+'" aria-pressed="'+(s.d===TODAY)+'">วันนี้</button><button type="button" class="chip" data-act="sheetDay" data-arg="'+YESTERDAY+'" aria-pressed="'+(s.d===YESTERDAY)+'">เมื่อวาน</button>' +
       '<input type="date" id="shDate" aria-label="เลือกวันที่" value="'+s.d+'"></div>' +
-    '<label class="sec-l" for="shDesc">บันทึกช่วยจำ (ไม่ใส่ก็ได้)</label><input type="text" id="shDesc" class="txt" maxlength="200" placeholder="'+(k==='in'?'เช่น ส่งร้านตลาดน้ำ 40 ถุง':'เช่น กล้วย 80 หวี สวนลุงชม')+'" value="'+esc(s.desc)+'">' +
+    '<label class="sec-l" for="shDesc">บันทึกช่วยจำ (ไม่ใส่ก็ได้)</label><input type="text" id="shDesc" class="txt" maxlength="200" placeholder="'+(k==='in' ? 'เช่น ส่งร้านตลาดน้ำ 40 ถุง' : 'เช่น กล้วย 80 หวี สวนลุงชม')+'" value="'+esc(s.desc)+'">' +
     '<div class="evbox"><label class="toggle" for="shEv"><span>มีใบเสร็จ / หลักฐานการโอน<br><small class="muted">ใช้ตอนหักค่าใช้จ่ายตามจริง</small></span><input type="checkbox" role="switch" id="shEv"'+(s.ev?' checked':'')+'></label></div>' +
-    '<div class="sec-l">รูปใบเสร็จ / สลิปโอนเงิน</div><div id="evBox" class="stack" style="gap:10px">'+evBoxHtml(s)+'</div>' +
-    '<div class="savebtns"><button type="button" class="bigsave '+k+'" data-act="saveEntry">'+(s.editId?'บันทึกการแก้ไข':'บันทึก')+'</button>' +
-    (s.editId ? (s.confirmDel?'<button type="button" class="btn danger block" data-act="delYes">ยืนยัน ลบรายการนี้</button>':'<button type="button" class="btn danger block" data-act="delAsk">ลบรายการนี้</button>')
-              : '<button type="button" class="btn block" data-act="saveMore">บันทึก แล้วเพิ่มรายการต่อ</button>') + '</div>' +
+    '<div class="sec-l">รูปใบเสร็จ / สลิปโอนเงิน</div><div id="evBox" class="stack" style="gap:10px">'+evidenceBox(s)+'</div>' +
+    '<div class="savebtns"><button type="button" class="bigsave '+k+'" data-act="save">'+(s.editId ? 'บันทึกการแก้ไข' : 'บันทึก')+'</button>' +
+      (s.editId ? (s.confirmDel ? '<button type="button" class="btn danger block" data-act="deleteYes">ยืนยัน ลบรายการนี้</button>' : '<button type="button" class="btn danger block" data-act="deleteAsk">ลบรายการนี้</button>')
+                : '<button type="button" class="btn block" data-act="saveMore">บันทึก แล้วเพิ่มรายการต่อ</button>') + '</div>' +
     '</div></div>';
-  if (focusAmt && !s.editId){ const i = document.getElementById('shAmt'); if (i) i.focus(); }
+  if (focus && !s.editId){ const i = document.getElementById('shAmt'); if (i) i.focus(); }
 }
-function fmtAmt(v){ const n = parseFloat(String(v).replace(/,/g,'')); if (!isFinite(n)) return ''; const [i,d] = String(v).replace(/,/g,'').split('.'); return Number(i||0).toLocaleString('en-US') + (d!==undefined?'.'+d.slice(0,2):''); }
 function saveEntry(more){
   const s = ui.sheet;
-  const items = [];
-  const amt = Math.round(numOf(s.amt)*100)/100;
-  if (!(amt>0)){ toast('ใส่จำนวนเงินก่อนนะ'); const i = document.getElementById('shAmt'); if (i) i.focus(); return; }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s.d)){ toast('เลือกวันที่ก่อนนะ'); return; }
+  const amt = round2(numOf(s.amt));
+  if (!(amt > 0)){ toast('ใส่จำนวนเงินก่อนนะ'); const i = document.getElementById('shAmt'); if (i) i.focus(); return; }
+  if (!DATE_RE.test(s.d)){ toast('เลือกวันที่ก่อนนะ'); return; }
   if (s.evBusy){ toast('รอใส่เลขหลักฐานในรูปให้เสร็จก่อนนะ'); return; }
   const newEv = s.newEv.slice(), delEv = s.delEv.slice();
-  const files = s.files.filter(f=>!delEv.includes(f.id)).concat(newEv.map(f=>({id:f.id, y:f.y, no:f.no, pending:true})));
-  const rec = {d:s.d, t:s.kind, c:s.c, desc:s.desc.trim(), amt, ev:s.ev, items, files};
-  if (s.editId){ Object.assign(state.txns.find(t=>t.id===s.editId), rec); rec.id = s.editId; toast('แก้ไขแล้ว'); }
-  else { rec.id = uid(); state.txns.push(rec); toast('บันทึก'+(rec.t==='in'?'รายรับ':'รายจ่าย')+' '+baht(amt, amt%1!==0)+' บาท แล้ว'); }
-  const changedId = rec.id;
-  if (+s.d.slice(0,4)!==+ui.year) ui.year = +s.d.slice(0,4);
-  if (more){ ui.sheet = Object.assign({}, s, {editId:null, amt:'', desc:'', confirmDel:false, items:[blankItem()], files:[], newEv:[], delEv:[], evBusy:0}); render(); renderSheet(true); }
+  const rec = {d:s.d, t:s.kind, c:s.c, desc:s.desc.trim().slice(0,200), amt, ev:s.ev,
+    files: s.files.filter(f=>!delEv.includes(f.id)).concat(newEv.map(f=>({id:f.id, y:f.y, no:f.no, pending:true})))};
+  let id;
+  if (s.editId){ id = s.editId; Object.assign(state.txns.find(t=>t.id===id), rec); toast('แก้ไขแล้ว'); }
+  else { id = uid(); state.txns.push(Object.assign({id}, rec)); toast('บันทึก'+(rec.t==='in'?'รายรับ':'รายจ่าย')+' '+baht(amt, amt%1!==0)+' บาท แล้ว'); }
+  if (more){ ui.sheet = Object.assign({}, s, {editId:null, amt:'', desc:'', confirmDel:false, files:[], newEv:[], delEv:[], evBusy:0}); render(); renderSheet(true); }
   else { closeSheet(); render(); }
-  markDirty({up:changedId});
-  if (newEv.length || delEv.length) queueEvidence(changedId, newEv, delEv);
+  markDirty({up:id});
+  if (newEv.length || delEv.length) queueEvidence(id, newEv, delEv);
+}
+function deleteEntry(){
+  const id = ui.sheet.editId;
+  state.txns = state.txns.filter(t=>t.id!==id);
+  evQueue = evQueue.filter(o=>o.txn!==id); saveEvQueue();   // the database removes its photos with the entry
+  closeSheet(); render(); markDirty({del:id}); toast('ลบรายการแล้ว');
 }
 
-/* ---------- events ---------- */
+/* ---------- 11. actions (every button carries data-act, optional data-arg) ---------- */
+const ACTIONS = {
+  open: a=>openSheet(a),
+  edit: a=>openSheet(null, a),
+  closeSheet,
+  save: ()=>saveEntry(false),
+  saveMore: ()=>saveEntry(true),
+  deleteAsk: ()=>{ ui.sheet.confirmDel = true; renderSheet(); },
+  deleteYes: deleteEntry,
+  sheetKind: a=>{ ui.sheet.kind = a; ui.sheet.c = CATS[a][0][0]; renderSheet(); },
+  sheetCat: a=>{ ui.sheet.c = a; renderSheet(); },
+  sheetDay: a=>{ ui.sheet.d = a; renderSheet(); },
+  plus: a=>{ ui.sheet.amt = a==='0' ? '' : String(numOf(ui.sheet.amt) + +a); renderSheet(); },
+  pickEvidence: a=>{ const inp = document.getElementById(a); if (inp) inp.click(); },
+  viewEvidence: a=>openViewer(a),
+  closeViewer,
+  removeEvidence: a=>{ const s = ui.sheet; if (!s) return;
+    if (s.newEv.some(f=>f.id===a)) s.newEv = s.newEv.filter(f=>f.id!==a); else if (!s.delEv.includes(a)) s.delEv.push(a);
+    renderEvidenceBox(); toast('เอารูปออกแล้ว กดบันทึกเพื่อยืนยัน'); },
+  filterMonth: a=>{ ui.fMonth = a; render(); },
+  filterType: a=>{ ui.fType = a; render(); },
+  sync: ()=>syncNow(false),
+  clearSample: ()=>{ state = freshState(); ui.year = NOW.getFullYear(); saveLocal(); render(); toast('ล้างแล้ว เริ่มบันทึกได้เลย'); },
+  keepSample: ()=>{ state.sample = false; markDirty({all:true}); render(); },
+  copyCsv: a=>copyOut(toCsv(a==='all' ? state.txns : txYear(ui.year)), 'รายการ'),
+  copyJson: ()=>copyOut(JSON.stringify({v:3, txns:state.txns.map(({files, ...t})=>t), tax:state.tax}), 'ข้อมูลสำรอง'),
+  importJson: ()=>{
+    let s; try { s = JSON.parse(document.getElementById('inBox').value); } catch(e){}
+    const n = normalizeState(s && Array.isArray(s.txns) ? {v:3, txns:s.txns.map(t=>Object.assign({}, t, {files:[]})), tax:s.tax, pend:emptyPend()} : null);
+    if (!n){ toast('ข้อมูลไม่ถูกต้อง ต้องเป็นข้อความจากปุ่ม "คัดลอกข้อมูลสำรอง"'); return; }
+    state = n; evQueue = []; saveEvQueue(); ui.year = pickDefaultYear();
+    markDirty({wipe:true, all:true}); render(); toast('กู้คืน '+n.txns.length+' รายการแล้ว');
+  },
+  wipe: ()=>{ ui.confirmWipe = true; render(); const i = document.getElementById('wipePin'); if (i) i.focus(); },
+  wipeNo: ()=>{ ui.confirmWipe = false; render(); },
+  wipeYes: async ()=>{
+    const inp = document.getElementById('wipePin'), pin = inp ? inp.value.trim() : '';
+    let ok = false; try { ok = !!pin && (await sha256hex(pin)) === CFG.wipePinSha256; } catch(e){}
+    if (!ok){ const m = document.getElementById('wipeMsg'); if (m) m.textContent = 'PIN ไม่ถูกต้อง ยังไม่ได้ลบข้อมูล'; if (inp){ inp.value = ''; inp.focus(); } return; }
+    state = freshState(); evQueue = []; saveEvQueue(); ui.confirmWipe = false;
+    markDirty({wipe:true}); render(); toast('ลบข้อมูลทั้งหมดแล้ว');
+  },
+  memberAdd: ()=>{
+    const inp = document.getElementById('memEmail'), em = (inp && inp.value || '').trim().toLowerCase();
+    if (!EMAIL_RE.test(em)){ ui.membersErr = 'ใส่อีเมลให้ถูกต้องก่อนนะ'; render(); return; }
+    api.memberAdd(em).then(()=>{ ui.membersErr = ''; toast('เพิ่ม '+em+' แล้ว'); loadMembers(); }).catch(e=>{ ui.membersErr = errText(e); render(); });
+  },
+  memberRemove: a=>{ ui.membersErr = ''; api.memberRemove(a).then(()=>{ toast('เอา '+a+' ออกแล้ว'); loadMembers(); }).catch(e=>{ ui.membersErr = errText(e); render(); }); },
+  sendLink: ()=>sendLink(),
+  verifyCode: ()=>verifyCode(),
+  loginAgain: ()=>{ ui.auth = {step:'email', email:(ui.auth||{}).email}; render(); },
+  skipLogin: ()=>{ ui.skipLogin = true; sync.status = 'local'; render(); },
+  showLogin: ()=>{ ui.skipLogin = false; ui.auth = ui.auth || {step:'email'}; render(); },
+  logout: ()=>logout(),
+  recheck: ()=>{ if (sb) sb.auth.getSession().then(r=>{ const s = r.data && r.data.session; if (s) onSignedIn(s); else { ui.auth = {step:'email'}; render(); } }); }
+};
 document.addEventListener('click', e=>{
-  const b = e.target.closest('button,[data-act]'); if (!b) return;
-  const d = b.dataset;
-  if (d.open){ openSheet(d.open); return; }
-  if (d.edit){ openSheet(null, d.edit); return; }
-  if (d.skind){ ui.sheet.kind = d.skind; ui.sheet.c = CATS[d.skind][0][0]; renderSheet(); return; }
-  if (d.cat){ ui.sheet.c = d.cat; renderSheet(); return; }
-  if (d.act==='evCam' || d.act==='evPick'){ const inp = document.getElementById(d.act); if (inp) inp.click(); return; }
-  if (d.evview){ openViewer(d.evview); return; }
-  if (d.act==='closeViewer'){ closeViewer(); return; }
-  if (d.memdel && conn){ const em = d.memdel; ui.membersErr = ''; conn.memberRemove(em).then(()=>{ toast('เอา '+em+' ออกแล้ว'); loadMembers(); }).catch(e=>{ ui.membersErr = errText(e); render(); }); return; }
-  if (d.act==='memAdd' && conn){ const inp = document.getElementById('memEmail'), em = (inp && inp.value || '').trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)){ ui.membersErr = 'ใส่อีเมลให้ถูกต้องก่อนนะ'; render(); return; }
-    conn.memberAdd(em).then(()=>{ ui.membersErr = ''; toast('เพิ่ม '+em+' แล้ว'); loadMembers(); }).catch(e=>{ ui.membersErr = errText(e); render(); }); return; }
-  if (d.act==='sendLink'){ sendLink(); return; }
-  if (d.act==='verifyCode'){ verifyCode(); return; }
-  if (d.act==='loginAgain'){ ui.auth = {step:'email', email:(ui.auth||{}).email}; render(); return; }
-  if (d.act==='skipLogin'){ ui.skipLogin = true; render(); return; }
-  if (d.act==='showLogin'){ ui.skipLogin = false; ui.auth = ui.auth || {step:'email'}; render(); return; }
-  if (d.act==='logout'){ (sbClient ? sbClient.auth.signOut().catch(()=>{}) : Promise.resolve()).then(()=>{ conn = null; me = null; ui.members = null; ui.auth = {step:'email'}; ui.skipLogin = false; ui.save = 'local'; render(); }); return; }
-  if (d.act==='recheck' && sbClient){ sbClient.auth.getSession().then(r=>{ const s = r.data && r.data.session; if (s) onSignedIn(s); else { ui.auth = {step:'email'}; render(); } }); return; }
-  if (d.evdel && ui.sheet){ const s = ui.sheet, id = d.evdel;
-    if (s.newEv.some(f=>f.id===id)) s.newEv = s.newEv.filter(f=>f.id!==id); else if (!s.delEv.includes(id)) s.delEv.push(id);
-    renderEvBox(); toast('เอารูปออกแล้ว กดบันทึกเพื่อยืนยัน'); return; }
-  if (d.delitem!==undefined){ const s = ui.sheet; s.items.splice(+d.delitem, 1); if (!s.items.length) s.items.push(blankItem()); if (!sheetItemsActive(s)) s.amt=''; renderSheet(); return; }
-  if (d.act==='addItem'){ ui.sheet.items.push(blankItem()); renderSheet(ui.sheet.items.length-1); return; }
-  if (d.act==='copyItemsCsv'){ copyOut(toItemsCsv(txYear(ui.year)), 'รายการสินค้า'); return; }
-  if (d.day){ ui.sheet.d = d.day; renderSheet(); return; }
-  if (d.plus!==undefined){ const cur = parseFloat(String(ui.sheet.amt).replace(/,/g,''))||0; ui.sheet.amt = d.plus==='0' ? '' : String(cur + +d.plus); renderSheet(); return; }
-  if (d.fm!==undefined){ ui.fMonth = d.fm; render(); return; }
-  if (d.ft!==undefined){ ui.fType = d.ft; render(); return; }
-  const act = d.act;
-  if (act==='closeSheet') closeSheet();
-  if (act==='saveEntry') saveEntry(false);
-  if (act==='saveMore') saveEntry(true);
-  if (act==='delAsk'){ ui.sheet.confirmDel = true; renderSheet(); }
-  if (act==='syncNow'){ syncNow(false); }
-  if (act==='delYes'){ const id = ui.sheet.editId; state.txns = state.txns.filter(t=>t.id!==id); evOps = evOps.filter(o=>o.txn!==id); storeEvOps(); closeSheet(); render(); markDirty({del:id}); toast('ลบรายการแล้ว'); }
-  if (act==='clearSample'){ state = freshState(); ui.year = now.getFullYear(); render(); markDirty(); toast('ล้างแล้ว เริ่มบันทึกได้เลย'); }
-  if (act==='keepSample'){ state.sample=false; render(); markDirty({all:true}); }
-  if (act==='copyCsv') copyOut(toCsv(txYear(ui.year)), 'รายการ');
-  if (act==='copyCsvAll') copyOut(toCsv(state.txns), 'รายการ');
-  if (act==='copyJson') copyOut(JSON.stringify(state), 'ข้อมูลสำรอง');
-  if (act==='importJson'){
-    try { const s = JSON.parse(document.getElementById('inBox').value); if (!s || !Array.isArray(s.txns)) throw 0;
-      s.txns = s.txns.filter(t=>t && /^\d{4}-\d{2}-\d{2}$/.test(t.d) && (t.t==='in'||t.t==='out') && CAT[t.c] && +t.amt>0);
-      s.txns.forEach(t=>{ t.files = []; }); evOps = []; storeEvOps();
-      s.pend = emptyPend(); s.sample=false; state=normalize(s); ui.year=pickDefaultYear(); render(); markDirty({wipe:true, all:true}); toast('กู้คืน '+s.txns.length+' รายการแล้ว');
-    } catch(err){ toast('ข้อมูลไม่ถูกต้อง ต้องเป็นข้อความจากปุ่ม "คัดลอกข้อมูลสำรอง"'); }
-  }
-  if (act==='wipe'){ ui.confirmWipe=true; render(); }
-  if (act==='wipeNo'){ ui.confirmWipe=false; render(); }
-  if (act==='wipeYes'){ checkPin(document.getElementById('wipePin')).then(ok=>{
-    if (!ok){ const m=document.getElementById('wipeMsg'), i=document.getElementById('wipePin'); if (m) m.textContent='PIN ไม่ถูกต้อง ยังไม่ได้ลบข้อมูล'; if (i){ i.value=''; i.focus(); } return; }
-    state=freshState(); evOps=[]; storeEvOps(); ui.confirmWipe=false; render(); markDirty({wipe:true}); toast('ลบข้อมูลทั้งหมดแล้ว'); }); }
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const fn = ACTIONS[el.dataset.act]; if (!fn) return;
+  if (el.tagName==='A' && !el.getAttribute('href')) e.preventDefault();
+  fn(el.dataset.arg);
 });
 document.addEventListener('input', e=>{
   const el = e.target;
-  if (el.id==='shAmt'){ const raw = el.value.replace(/[^\d.]/g,'').replace(/(\..*)\./g,'$1'); ui.sheet.amt = raw; const f = fmtAmt(raw); if (f!==el.value){ el.value = f; el.setSelectionRange(f.length,f.length); } return; }
-  if (el.id==='shDesc'){ ui.sheet.desc = el.value; return; }
-  if (el.dataset.item!==undefined && ui.sheet){
-    const it = ui.sheet.items[+el.dataset.item]; if (!it) return; const f = el.dataset.f;
-    if (f==='q' || f==='p'){ const raw = el.value.replace(/[^\d.]/g,'').replace(/(\..*)\./g,'$1'); if (raw!==el.value) el.value = raw; it[f] = raw; }
-    else it[f] = el.value;
-    refreshTotals(); return;
+  if (el.id==='shAmt' && ui.sheet){
+    const raw = el.value.replace(/[^\d.]/g,'').replace(/(\..*)\./g,'$1'); ui.sheet.amt = raw;
+    const f = fmtAmt(raw); if (f!==el.value){ el.value = f; el.setSelectionRange(f.length, f.length); }
   }
-  if (el.id==='shDate'){ if (el.value){ ui.sheet.d = el.value; renderSheet(); } return; }
-  if (el.id==='fText'){ ui.fText = el.value; const pos = el.selectionStart; render(); const n=document.getElementById('fText'); n.focus(); n.setSelectionRange(pos,pos); return; }
-  if (el.dataset.tax){ const v = Math.max(0, parseFloat(el.value.replace(/,/g,''))||0); setTax(el.dataset.tax, v, true); }
+  else if (el.id==='shDesc' && ui.sheet) ui.sheet.desc = el.value;
+  else if (el.id==='shDate' && ui.sheet){ if (DATE_RE.test(el.value)){ ui.sheet.d = el.value; renderSheet(); } }
+  else if (el.id==='fText'){ ui.fText = el.value; const b = document.getElementById('entriesBody'); if (b) b.innerHTML = entriesBody(); }
+  else if (el.dataset.tax){ state.tax[ui.year] = Object.assign(taxSet(ui.year), {[el.dataset.tax]: Math.max(0, numOf(el.value))}); saveLocal(); refreshTax(); }
 });
 document.addEventListener('change', e=>{
   const el = e.target;
-  if (el.id==='yearSel'){ ui.year = +el.value; ui.fMonth='all'; render(); return; }
-  if (el.id==='shEv'){ ui.sheet.ev = el.checked; return; }
-  if ((el.id==='evCam' || el.id==='evPick') && el.files && el.files.length){ const fl = [...el.files]; el.value = ''; addEvidenceFiles(fl); return; }
-  if (el.dataset.item!==undefined && el.dataset.f==='n' && ui.sheet){
-    // known item: fill unit and last price used, if still empty
-    const idx = +el.dataset.item, it = ui.sheet.items[idx], mem = itemMemory(ui.sheet.kind).get(String(el.value).trim()); if (!it || !mem) return;
-    const set = (f,v) => { if (v==null || String(it[f]).trim()!=='') return; it[f] = String(v); const inp = document.querySelector('[data-item="'+idx+'"][data-f="'+f+'"]'); if (inp) inp.value = it[f]; };
-    set('u', mem.u); set('p', mem.p); refreshTotals(); return;
-  }
-  if (el.dataset.taxbool){ setTax(el.dataset.taxbool, el.checked); return; }
-  if (el.dataset.tax){ const v = Math.max(0, parseFloat(el.value.replace(/,/g,''))||0); el.value = v?baht(v):''; markDirty({tax:ui.year}); }
+  if (el.id==='yearSel'){ ui.year = +el.value; ui.fMonth = 'all'; render(); }
+  else if (el.id==='shEv' && ui.sheet) ui.sheet.ev = el.checked;
+  else if ((el.id==='evCam' || el.id==='evPick') && el.files && el.files.length){ const files = [...el.files]; el.value = ''; addEvidenceFiles(files); }
+  else if (el.dataset.taxbool){ state.tax[ui.year] = Object.assign(taxSet(ui.year), {[el.dataset.taxbool]: el.checked}); refreshTax(); markDirty({tax:ui.year}); }
+  else if (el.dataset.tax){ const v = Math.max(0, numOf(el.value)); el.value = v ? baht(v) : ''; markDirty({tax:ui.year}); }
 });
-document.addEventListener('keydown', e=>{ if (e.key==='Escape' && document.getElementById('viewer')){ closeViewer(); return; } if (e.key==='Escape' && ui.sheet) closeSheet(); if (e.key==='Enter' && ui.sheet && (e.target.id==='shAmt'||e.target.id==='shDesc')){ e.preventDefault(); saveEntry(false); } });
-const WIPE_PIN_SHA256 = 'b3943428559bf9392be8588f0ce4e5a53d5d0b189a21b16bf2726ca0411d63e6';
-async function checkPin(el){
-  const v = el ? el.value.trim() : '';
-  if (!v) return false;
-  try { const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('') === WIPE_PIN_SHA256; }
-  catch(e){ return false; }
+document.addEventListener('keydown', e=>{
+  if (e.key==='Escape'){ if (document.getElementById('viewer')) closeViewer(); else if (ui.sheet) closeSheet(); return; }
+  if (e.key!=='Enter') return;
+  const map = {shAmt:'save', shDesc:'save', wipePin:'wipeYes', loginEmail:'sendLink', loginCode:'verifyCode', memEmail:'memberAdd'};
+  const act = map[e.target.id];
+  if (act && (ui.sheet || (act!=='save'))){ e.preventDefault(); ACTIONS[act](); }
+});
+
+/* ---------- 12. sign-in for the web version ---------- */
+function loadScript(src){ return new Promise((res, rej)=>{ const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+async function startWeb(){
+  mode = 'web';
+  try { await loadScript(CFG.lib); } catch(e){ sync.status = 'local'; render(); return; }
+  sb = window.supabase.createClient(CFG.url, CFG.key, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit'}});
+  sb.auth.onAuthStateChange((ev, session)=>{
+    if (session && (ev==='SIGNED_IN' || ev==='INITIAL_SESSION')) setTimeout(()=>onSignedIn(session), 0);
+    if (ev==='SIGNED_OUT'){ api = null; me = null; ui.auth = {step:'email'}; sync.status = 'local'; if (!ui.sheet) render(); }
+  });
+  let session = null;
+  try { session = (await sb.auth.getSession()).data.session; } catch(e){}
+  if (session) onSignedIn(session);
+  else { ui.auth = ui.auth || {step:'email'}; sync.status = 'local'; render(); }
 }
-document.addEventListener('keydown', e=>{ if (e.key==='Enter' && e.target.id==='wipePin'){ e.preventDefault(); const b=document.querySelector('[data-act="wipeYes"]'); if (b) b.click(); } });
+async function onSignedIn(session){
+  if (api || signingIn) return;
+  signingIn = true; ui.auth = {step:'checking'}; render();
+  const candidate = webApi(sb);
+  try { me = await candidate.whoami(); } catch(e){ me = null; }
+  signingIn = false;
+  if (!me || !me.role){ ui.auth = {step:'denied', email:(session.user && session.user.email) || (me && me.email)}; sync.status = 'local'; render(); return; }
+  if (/access_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+  api = candidate; ui.auth = null; ui.skipLogin = false; ui.members = null;
+  render(); syncNow(true);
+}
 async function sendLink(){
   const el = document.getElementById('loginEmail'), msg = document.getElementById('loginMsg');
   const email = (el && el.value || '').trim().toLowerCase();
   const say = (t, ok) => { if (msg){ msg.style.color = ok ? 'var(--muted)' : 'var(--exp)'; msg.textContent = t; } };
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ say('ใส่อีเมลให้ถูกต้องก่อนนะ'); return; }
-  if (!sbClient){ say('ยังเชื่อมต่อไม่ได้ ลองใหม่อีกครั้ง'); return; }
+  if (!EMAIL_RE.test(email)) return say('ใส่อีเมลให้ถูกต้องก่อนนะ');
+  if (!sb) return say('ยังเชื่อมต่อไม่ได้ ลองใหม่อีกครั้ง');
   say('กำลังส่ง…', true);
-  let r; try { r = await sbClient.auth.signInWithOtp({email, options:{emailRedirectTo: IS_FILE ? WEB_URL : location.origin + location.pathname, shouldCreateUser:true}}); } catch(e){ r = {error:e}; }
-  if (r.error){ say(/rate|second|too many|limit/i.test(String(r.error.message)) ? 'ส่งอีเมลบ่อยเกินไป รอสักครู่แล้วลองใหม่' : 'ส่งไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  let r; try { r = await sb.auth.signInWithOtp({email, options:{emailRedirectTo: IS_FILE ? CFG.webUrl : location.origin + location.pathname, shouldCreateUser:true}}); } catch(e){ r = {error:e}; }
+  if (r.error) return say(/rate|second|too many|limit/i.test(String(r.error.message)) ? 'ส่งอีเมลบ่อยเกินไป รอสักครู่แล้วลองใหม่' : 'ส่งไม่สำเร็จ ลองใหม่อีกครั้ง');
   ui.auth = {step:'sent', email}; render();
 }
 async function verifyCode(){
-  const el = document.getElementById('loginCode'), msg = document.getElementById('loginMsg'), token = (el && el.value || '').replace(/\s/g,'');
+  const el = document.getElementById('loginCode'), msg = document.getElementById('loginMsg');
+  const token = (el && el.value || '').replace(/\s/g,'');
   if (!token){ if (msg) msg.textContent = 'ใส่รหัสจากอีเมลก่อนนะ'; return; }
-  let r; try { r = await sbClient.auth.verifyOtp({email: ui.auth.email, token, type:'email'}); } catch(e){ r = {error:e}; }
+  let r; try { r = await sb.auth.verifyOtp({email:ui.auth.email, token, type:'email'}); } catch(e){ r = {error:e}; }
   if (r.error){ if (msg) msg.textContent = 'รหัสไม่ถูกต้องหรือหมดอายุ ลองส่งใหม่'; return; }
   if (r.data && r.data.session) onSignedIn(r.data.session);
 }
-document.addEventListener('keydown', e=>{
-  if (e.key!=='Enter') return;
-  if (e.target.id==='loginEmail'){ e.preventDefault(); sendLink(); }
-  if (e.target.id==='loginCode'){ e.preventDefault(); verifyCode(); }
-  if (e.target.id==='memEmail'){ e.preventDefault(); const b = document.querySelector('[data-act="memAdd"]'); if (b) b.click(); }
-});
-function setTax(k, v, quiet){
-  const y = ui.year; state.tax[y] = Object.assign(taxSet(y), {[k]:v});
-  const r = document.getElementById('taxResult'); if (r) r.innerHTML = taxResult();
-  const a = document.getElementById('allowSum'); if (a) a.textContent = baht(calcTax(y,'flat').allowTotal)+' บาท';
-  if (!quiet) markDirty({tax:y}); else { state.savedAt = Date.now(); storeLocal(); }
+async function logout(){
+  if (sb){ try { await sb.auth.signOut(); } catch(e){} }
+  api = null; me = null; ui.members = null; ui.auth = {step:'email'}; ui.skipLogin = false; sync.status = 'local'; render();
 }
+
+/* ---------- 13. start ---------- */
 function route(){
   const h = location.hash.replace('#','');
   ui.tab = ['overview','entries','tax','backup'].includes(h) ? h : 'overview';
-  ui.confirmWipe = false; render(); window.scrollTo(0,0);
+  ui.confirmWipe = false;
+  if (!ui.sheet) render();
+  window.scrollTo(0,0);
 }
 window.addEventListener('hashchange', route);
 route();
+(function detect(tries){
+  if (window.claude && typeof window.claude.use === 'function'){
+    mode = 'claude';
+    window.claude.use('mcp').then(m=>{
+      if (!m){ sync.status = 'local'; return render(); }
+      api = connectorApi(m); render(); syncNow(true);
+      api.whoami().then(w=>{ me = w || {role:'owner'}; }, ()=>{ me = {role:'owner'}; }).then(()=>{ if (ui.tab==='backup' && !ui.sheet) render(); });
+    }, ()=>{ sync.status = 'local'; render(); });
+  } else if (tries < 6) setTimeout(()=>detect(tries+1), 250);
+  else startWeb();
+})(0);
 })();
 </script>
 </body>
