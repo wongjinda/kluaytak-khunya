@@ -257,22 +257,20 @@ const DEFAULT_TAX = {salary:0, spouse:false, kids:0, parents:0, sso:0, life:0, h
 function loadLocal(){ try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; } }
 function sampleState(){
   const txns = []; let seed = 7;
-  const R = (a,b)=>{ seed = (seed*9301+49297)%233280; return a + Math.floor((b-a+1)*seed/233280); };
-  const I = (n,q,u,p)=>({n,q,u,p});
+  const rnd = (a,b)=>{ seed = (seed*9301+49297)%233280; return Math.round((a + (b-a)*seed/233280)/10)*10; };
   const y = new Date().getFullYear(), lastM = new Date().getMonth();
   for (let m=0; m<Math.max(lastM,1); m++){
     const d = (day)=> y+'-'+String(m+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
-    const T = (dd,t,c,desc,items,ev)=>txns.push({d:d(dd), t, c, desc, items, amt:Math.round(items.reduce((a,i)=>a+i.q*i.p,0)*100)/100, ev:ev!==false});
-    T(3,'out','banana','สวนลุงชม',[I('กล้วยน้ำว้า',R(70,100),'หวี',R(10,14))]);
-    T(4,'out','package','',[I('ถุงซิปล็อก',R(8,14),'แพ็ก',R(85,95)), I('สติกเกอร์ฉลาก',R(1,2),'ม้วน',R(320,380))]);
-    T(5,'out','ingredient','',[I('น้ำผึ้ง',R(3,5),'ขวด',R(250,300))], m%3!==1);
-    T(15,'in','retail','ครึ่งเดือนแรก',[I('กล้วยตากถุงเล็ก',R(120,180),'ถุง',R(35,40)), I('กล้วยตากถุงใหญ่',R(20,35),'ถุง',R(110,120))]);
-    T(18,'in','wholesale','ร้านของฝากตลาดน้ำ',[I('กล้วยตากถุงเล็ก',R(250,400),'ถุง',R(28,32)), I('กล้วยตากกล่องของฝาก',R(30,60),'กล่อง',R(140,160))]);
-    T(22,'in','online','',[I('กล้วยตากถุงใหญ่',R(50,80),'ถุง',R(115,130))]);
-    T(25,'out','utility','ค่าไฟโรงอบ + แก๊ส',[I('ค่าไฟ',1,'เดือน',R(900,1300)), I('แก๊สหุงต้ม',1,'ถัง',R(420,460))]);
-    T(28,'out','labor','',[I('คนช่วยปอก-ตาก',R(18,24),'แรง',R(330,350))], m%4!==0);
-    T(28,'out','shipping','',[I('ค่าส่งพัสดุ',R(10,20),'กล่อง',R(45,60))]);
-    T(28,'in','retail','ครึ่งเดือนหลัง',[I('กล้วยตากถุงเล็ก',R(120,180),'ถุง',R(35,40))]);
+    txns.push({d:d(3), t:'out', c:'banana', desc:'สวนลุงชม '+Math.round(rnd(700,1000)/10)+' หวี', amt:rnd(7500,11000), ev:true});
+    txns.push({d:d(4), t:'out', c:'package', desc:'ถุงซิปล็อก + ฉลาก', amt:rnd(1800,2800), ev:true});
+    txns.push({d:d(5), t:'out', c:'ingredient', desc:'น้ำผึ้งป่า', amt:rnd(900,1600), ev: m%3!==1});
+    txns.push({d:d(15), t:'in', c:'retail', desc:'ครึ่งเดือนแรก', amt:rnd(6500,9000), ev:true});
+    txns.push({d:d(18), t:'in', c:'wholesale', desc:'ร้านของฝากตลาดน้ำ', amt:rnd(14000,22000), ev:true});
+    txns.push({d:d(22), t:'in', c:'online', desc:'ยอดรวมทั้งเดือน', amt:rnd(6000,11000), ev:true});
+    txns.push({d:d(25), t:'out', c:'utility', desc:'ค่าไฟโรงอบ + แก๊ส', amt:rnd(1500,2200), ev:true});
+    txns.push({d:d(28), t:'out', c:'labor', desc:'คนช่วยปอก-ตาก 2 คน', amt:rnd(6000,7000), ev:m%4!==0});
+    txns.push({d:d(28), t:'out', c:'shipping', desc:'ค่าส่งพัสดุ', amt:rnd(600,1100), ev:true});
+    txns.push({d:d(28), t:'in', c:'retail', desc:'ครึ่งเดือนหลัง', amt:rnd(6000,9500), ev:true});
   }
   txns.forEach(t=>t.id=uid());
   return {v:2, sample:true, savedAt:0, txns, tax:{}, pend:emptyPend()};
@@ -811,8 +809,6 @@ function overview(ro){
       '<div class="item"><div class="dot">📅</div><div>ยื่น ภ.ง.ด.94 (ครึ่งปี) ภายใน 30 ก.ย. '+be(y)+'<br>ยื่น ภ.ง.ด.90 (ทั้งปี) ภายใน 31 มี.ค. '+(be(y)+1)+'</div></div>' +
     '</section>' +
     '<section class="card chart"><div class="card-head"><h2>รายเดือน</h2><div class="legend"><span style="--c:var(--inc)">รับ</span><span style="--c:var(--exp)">จ่าย</span></div></div>' + monthlyChart(tx) + '</section>' +
-    '<section class="card"><div class="card-head"><h2>ขายอะไรได้เท่าไร</h2><span class="small muted">ปี '+be(y)+'</span></div>' + itemTable(tx,'in') + '</section>' +
-    '<section class="card"><div class="card-head"><h2>ซื้ออะไรไปเท่าไร</h2><span class="small muted">ปี '+be(y)+'</span></div>' + itemTable(tx,'out') + '</section>' +
     '<section class="card"><div class="card-head"><h2>จ่ายอะไรมากที่สุด</h2></div>' + catBars(tx,'out','var(--exp)') + '</section>' +
     '<section class="card"><div class="card-head"><h2>ขายได้จากช่องทางไหน</h2></div>' + catBars(tx,'in','var(--inc)') + '</section>';
 }
@@ -856,7 +852,7 @@ function itemTable(tx, kind){
 }
 function rowHtml(t){
   const c = CAT[t.c] || {n:t.c, e:'•'};
-  const detail = [itemsText(t.items), t.desc].filter(Boolean).join(' · ');
+  const detail = t.desc || '';
   return '<button class="row" data-edit="'+t.id+'"><span class="ico '+t.t+'" aria-hidden="true">'+c.e+'</span><span style="min-width:0"><span class="t" style="display:block">'+esc(c.n)+(t.files&&t.files.length?'<span class="clip" title="รูปหลักฐาน">📎'+t.files.length+'</span>':'')+(t.t==='out'&&!t.ev?'<span class="flag">ไม่มีใบเสร็จ</span>':'')+'</span><span class="d" style="display:block">'+shortDate(t.d)+(detail?' · '+esc(detail):'')+'</span></span>' +
     '<span class="a num '+t.t+'">'+(t.t==='in'?'+':'−')+baht(t.amt, t.amt%1!==0)+'</span></button>';
 }
@@ -957,7 +953,7 @@ function backup(ro){
     '<p class="small muted" style="margin:0">ข้อมูลเก็บในโปรเจกต์ kluaytak-khunya เปิดได้ทั้งใน Claude และเป็นเว็บทั่วไป (เข้าสู่ระบบด้วยอีเมล) ถ้าเชื่อมไม่ได้ รายการจะเก็บในเครื่องก่อน แล้วส่งขึ้นเมื่อเชื่อมได้</p></section>' +
     (conn && me && me.role==='owner' ? membersCard() : '') +
     '<section class="card stack"><h2>ส่งให้นักบัญชี</h2><p class="small muted" style="margin:0">กดคัดลอก แล้วไปวางใน Excel, Google Sheets หรือ LINE</p>' +
-    '<button class="btn primary block" data-act="copyCsv">คัดลอกรายการปี '+be(ui.year)+'</button><button class="btn block" data-act="copyItemsCsv">คัดลอกรายการสินค้าปี '+be(ui.year)+' (แยกทีละสินค้า)</button><button class="btn block" data-act="copyCsvAll">คัดลอกรายการทุกปี</button>' +
+    '<button class="btn primary block" data-act="copyCsv">คัดลอกรายการปี '+be(ui.year)+'</button><button class="btn block" data-act="copyCsvAll">คัดลอกรายการทุกปี</button>' +
     '<textarea id="outBox" readonly aria-label="ข้อมูลที่คัดลอก" placeholder="ข้อความที่คัดลอกจะแสดงตรงนี้ด้วย ถ้าคัดลอกอัตโนมัติไม่ได้ ให้กดค้างแล้วคัดลอกเอง"></textarea></section>' +
     '<section class="card stack"><h2>สำรองข้อมูล</h2><p class="small muted" style="margin:0">คัดลอกข้อมูลทั้งหมดเก็บไว้ (เช่น ส่งเข้า LINE ตัวเอง) แล้ววางกลับมาเพื่อกู้คืนได้</p>' +
     '<button class="btn block" data-act="copyJson">คัดลอกข้อมูลสำรอง</button>' +
@@ -985,7 +981,7 @@ async function loadMembers(){
 }
 function toCsv(list){
   const q = v => '"'+String(v).replace(/"/g,'""')+'"';
-  return [['วันที่','ประเภท','หมวด','สินค้า','รายละเอียด','รายรับ','รายจ่าย','มีหลักฐาน'].map(q).join(',')].concat(list.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(t=>[t.d, t.t==='in'?'รายรับ':'รายจ่าย', CAT[t.c]?CAT[t.c].n:t.c, itemsText(t.items), t.desc, t.t==='in'?t.amt:'', t.t==='out'?t.amt:'', t.ev?'มี':'ไม่มี'].map(q).join(','))).join('\n');
+  return [['วันที่','ประเภท','หมวด','รายละเอียด','รายรับ','รายจ่าย','มีหลักฐาน'].map(q).join(',')].concat(list.slice().sort((a,b)=>a.d.localeCompare(b.d)).map(t=>[t.d, t.t==='in'?'รายรับ':'รายจ่าย', CAT[t.c]?CAT[t.c].n:t.c, t.desc, t.t==='in'?t.amt:'', t.t==='out'?t.amt:'', t.ev?'มี':'ไม่มี'].map(q).join(','))).join('\n');
 }
 function toItemsCsv(list){
   const q = v => '"'+String(v).replace(/"/g,'""')+'"';
@@ -1052,12 +1048,8 @@ function renderSheet(focusAmt){
     '<div class="kind" role="group" aria-label="ประเภท"><button class="in" data-skind="in" aria-pressed="'+(k==='in')+'">รายรับ (ได้เงิน)</button><button class="out" data-skind="out" aria-pressed="'+(k==='out')+'">รายจ่าย (จ่ายเงิน)</button></div>' +
     '<div class="sec-l">'+(k==='in'?'ขายทางไหน':'จ่ายค่าอะไร')+'</div>' +
     '<div class="cats" role="group" aria-label="หมวด">'+CATS[k].map(([key,n,e])=>'<button type="button" class="cat" data-cat="'+key+'" aria-pressed="'+(s.c===key)+'"><span class="e" aria-hidden="true">'+e+'</span>'+n+'</button>').join('')+'</div>' +
-    '<div class="sec-l">'+(k==='in'?'ขายอะไร จำนวนเท่าไร ราคาเท่าไร':'ซื้ออะไร จำนวนเท่าไร ราคาเท่าไร')+'</div>' +
-    '<datalist id="itemNames">'+[...itemMemory(k).keys()].map(n=>'<option value="'+esc(n)+'">').join('')+'</datalist>' +
-    '<div class="items">'+s.items.map((i,idx)=>itemRowHtml(i,idx,k)).join('')+'<button type="button" class="additem" data-act="addItem">+ เพิ่มสินค้าอีกรายการ</button></div>' +
-    '<div class="amtbox"><label for="shAmt">จำนวนเงินรวม</label><div class="amtline"><input id="shAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="'+esc(s.amt?fmtAmt(s.amt):'')+'"'+(sheetItemsActive(s)?' readonly':'')+'><span>บาท</span></div>' +
-    '<div class="autonote" id="autoNote"'+(sheetItemsActive(s)?'':' hidden')+'>คิดจากรายการสินค้าด้านบนให้อัตโนมัติ</div>' +
-    '<div class="plus" id="plusRow"'+(sheetItemsActive(s)?' hidden':'')+'>'+[100,500,1000,5000].map(v=>'<button type="button" data-plus="'+v+'">+'+baht(v)+'</button>').join('')+'<button type="button" data-plus="0">ล้าง</button></div></div>' +
+    '<div class="amtbox"><label for="shAmt">จำนวนเงิน</label><div class="amtline"><input id="shAmt" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="'+esc(s.amt?fmtAmt(s.amt):'')+'"><span>บาท</span></div>' +
+    '<div class="plus">'+[100,500,1000,5000].map(v=>'<button type="button" data-plus="'+v+'">+'+baht(v)+'</button>').join('')+'<button type="button" data-plus="0">ล้าง</button></div></div>' +
     '<div class="sec-l">วันที่</div><div class="dates"><button type="button" class="chip" data-day="'+TODAY+'" aria-pressed="'+(s.d===TODAY)+'">วันนี้</button><button type="button" class="chip" data-day="'+YESTERDAY+'" aria-pressed="'+(s.d===YESTERDAY)+'">เมื่อวาน</button>' +
       '<input type="date" id="shDate" aria-label="เลือกวันที่" value="'+s.d+'"></div>' +
     '<label class="sec-l" for="shDesc">บันทึกช่วยจำ (ไม่ใส่ก็ได้)</label><input type="text" id="shDesc" class="txt" maxlength="200" placeholder="'+(k==='in'?'เช่น ส่งร้านตลาดน้ำ 40 ถุง':'เช่น กล้วย 80 หวี สวนลุงชม')+'" value="'+esc(s.desc)+'">' +
@@ -1067,22 +1059,14 @@ function renderSheet(focusAmt){
     (s.editId ? (s.confirmDel?'<button type="button" class="btn danger block" data-act="delYes">ยืนยัน ลบรายการนี้</button>':'<button type="button" class="btn danger block" data-act="delAsk">ลบรายการนี้</button>')
               : '<button type="button" class="btn block" data-act="saveMore">บันทึก แล้วเพิ่มรายการต่อ</button>') + '</div>' +
     '</div></div>';
-  if (typeof focusAmt === 'number'){ const i = document.querySelector('[data-item="'+focusAmt+'"][data-f="n"]'); if (i) i.focus(); }
-  else if (focusAmt && !s.editId){ const i = document.querySelector('[data-item="0"][data-f="n"]'); if (i) i.focus(); }
+  if (focusAmt && !s.editId){ const i = document.getElementById('shAmt'); if (i) i.focus(); }
 }
 function fmtAmt(v){ const n = parseFloat(String(v).replace(/,/g,'')); if (!isFinite(n)) return ''; const [i,d] = String(v).replace(/,/g,'').split('.'); return Number(i||0).toLocaleString('en-US') + (d!==undefined?'.'+d.slice(0,2):''); }
 function saveEntry(more){
   const s = ui.sheet;
-  const used = s.items.map((i,idx)=>({i,idx})).filter(({i})=>String(i.n).trim() || numOf(i.q) || numOf(i.p));
-  for (const {i,idx} of used){
-    const focus = f => { const el = document.querySelector('[data-item="'+idx+'"][data-f="'+f+'"]'); if (el) el.focus(); };
-    if (!String(i.n).trim()){ toast('ใส่ชื่อสินค้ารายการที่ '+(idx+1)+' ก่อนนะ'); focus('n'); return; }
-    if (!(numOf(i.q)>0)){ toast('ใส่จำนวนของ '+i.n.trim()+' ก่อนนะ'); focus('q'); return; }
-    if (String(i.p).trim()==='' || numOf(i.p)<0){ toast('ใส่ราคาต่อหน่วยของ '+i.n.trim()+' ก่อนนะ'); focus('p'); return; }
-  }
-  const items = cleanItems(used.map(({i})=>({n:i.n, q:numOf(i.q), u:i.u, p:numOf(i.p)})));
-  const amt = items.length ? Math.round(items.reduce((a,i)=>a+Math.round(i.q*i.p*100)/100,0)*100)/100 : Math.round(numOf(s.amt)*100)/100;
-  if (!(amt>0)){ toast(items.length ? 'ยอดรวมต้องมากกว่า 0 บาท' : 'ใส่สินค้า หรือใส่จำนวนเงินก่อนนะ'); return; }
+  const items = [];
+  const amt = Math.round(numOf(s.amt)*100)/100;
+  if (!(amt>0)){ toast('ใส่จำนวนเงินก่อนนะ'); const i = document.getElementById('shAmt'); if (i) i.focus(); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.d)){ toast('เลือกวันที่ก่อนนะ'); return; }
   if (s.evBusy){ toast('รอใส่เลขหลักฐานในรูปให้เสร็จก่อนนะ'); return; }
   const newEv = s.newEv.slice(), delEv = s.delEv.slice();
